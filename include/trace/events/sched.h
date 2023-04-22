@@ -10,6 +10,30 @@
 #include <linux/tracepoint.h>
 #include <linux/binfmts.h>
 
+
+TRACE_EVENT(sched_select_wakeup_cpu,
+
+	    TP_PROTO(int id, int waker, int prev, int target),
+
+	    TP_ARGS(id, waker, prev, target),
+
+	    TP_STRUCT__entry(
+			     __field(         int,        id            )
+			     __field(         int,        waker         )
+			     __field(         int,        prev          )
+			     __field(         int,        target        )
+			     ),
+
+	    TP_fast_assign(
+			   __entry->id         = id;
+			   __entry->waker      = waker;
+			   __entry->prev       = prev;
+			   __entry->target     = target;
+			   ),
+
+	    TP_printk("id=%d waker=%d prev=%d target=%d", __entry->id, __entry->waker, __entry->prev, __entry->target)
+);
+
 /*
  * Tracepoint for calling kthread_stop, performed to end a kthread:
  */

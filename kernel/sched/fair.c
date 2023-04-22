@@ -7607,8 +7607,10 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 
 		if (sched_energy_enabled()) {
 			new_cpu = find_energy_efficient_cpu(p, prev_cpu);
-			if (new_cpu >= 0)
+			if (new_cpu >= 0) {
+				trace_sched_select_wakeup_cpu(0, cpu, prev_cpu, new_cpu);
 				return new_cpu;
+			}
 			new_cpu = prev_cpu;
 		}
 
@@ -7641,15 +7643,19 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 			break;
 	}
 
+	trace_sched_select_wakeup_cpu(11, cpu, prev_cpu, new_cpu);
 	if (unlikely(sd)) {
 		/* Slow path */
 		new_cpu = find_idlest_cpu(sd, p, cpu, prev_cpu, sd_flag);
+		trace_sched_select_wakeup_cpu(12, cpu, prev_cpu, new_cpu);
 	} else if (wake_flags & WF_TTWU) { /* XXX always ? */
 		/* Fast path */
 		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu);
+		trace_sched_select_wakeup_cpu(13, cpu, prev_cpu, new_cpu);
 	}
 	rcu_read_unlock();
 
+	trace_sched_select_wakeup_cpu(1, cpu, prev_cpu, new_cpu);
 	return new_cpu;
 }
 
