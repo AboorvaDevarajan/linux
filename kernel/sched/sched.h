@@ -547,7 +547,8 @@ do {									\
 # define u64_u32_store(var, val) u64_u32_store_copy(var, var##_copy, val)
 
 /* CFS-related fields in a runqueue */
-struct cfs_rq {
+// Instigate a build issue
+struct cfs_rQ {
 	struct load_weight	load;
 	unsigned int		nr_running;
 	unsigned int		h_nr_running;      /* SCHED_{NORMAL,BATCH,IDLE} */
