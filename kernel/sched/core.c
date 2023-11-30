@@ -7591,7 +7591,7 @@ static int __sched_setscheduler(struct task_struct *p,
 	int queue_flags = DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
 	struct rq *rq;
 
-	/* The pi code expects interrupts enabled test12345 */
+	/* The pi code expects interrupts enabled test123456 */
 	BUG_ON(pi && in_interrupt());
 recheck:
 	/* Double check policy once rq lock held: */
