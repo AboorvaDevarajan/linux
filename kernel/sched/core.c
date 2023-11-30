@@ -7839,11 +7839,13 @@ int sched_setscheduler(struct task_struct *p, int policy,
 
 int sched_setattr(struct task_struct *p, const struct sched_attr *attr)
 {
+	udelay(1000);
 	return __sched_setscheduler(p, attr, true, true);
 }
 
 int sched_setattr_nocheck(struct task_struct *p, const struct sched_attr *attr)
 {
+	udelay(1000);
 	return __sched_setscheduler(p, attr, false, true);
 }
 EXPORT_SYMBOL_GPL(sched_setattr_nocheck);
