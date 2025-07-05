@@ -768,105 +768,98 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			unsigned int buf_len)
 {
+	DBG_ENTRY("cmd=0x%x, buf_len=%u", cmd, buf_len);
 	unsigned long cmd_mask = PAPR_SCM_DIMM_CMD_MASK;
 	struct nd_cmd_pkg *nd_cmd;
 	struct papr_scm_priv *p;
 	enum papr_pdsm pdsm;
 
-	/* Only dimm-specific calls are supported atm */
-	if (!nvdimm)
+	if (!nvdimm) {
+		DBG_MID("nvdimm is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
-	/* get the provider data from struct nvdimm */
 	p = nvdimm_provider_data(nvdimm);
 
 	if (!test_bit(cmd, &cmd_mask)) {
-		dev_dbg(&p->pdev->dev, "Unsupported cmd=%u\n", cmd);
+		DBG_MID("Unsupported cmd=%u", cmd);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
 
-	/* For CMD_CALL verify pdsm request */
 	if (cmd == ND_CMD_CALL) {
-		/* Verify the envelope and envelop size */
-		if (!buf ||
-		    buf_len < (sizeof(struct nd_cmd_pkg) + ND_PDSM_HDR_SIZE)) {
-			dev_dbg(&p->pdev->dev, "Invalid pkg size=%u\n",
-				buf_len);
+		if (!buf || buf_len < (sizeof(struct nd_cmd_pkg) + ND_PDSM_HDR_SIZE)) {
+			DBG_MID("Invalid pkg size=%u", buf_len);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
-		/* Verify that the nd_cmd_pkg.nd_family is correct */
 		nd_cmd = (struct nd_cmd_pkg *)buf;
-
 		if (nd_cmd->nd_family != NVDIMM_FAMILY_PAPR) {
-			dev_dbg(&p->pdev->dev, "Invalid pkg family=0x%llx\n",
-				nd_cmd->nd_family);
+			DBG_MID("Invalid pkg family=0x%llx", nd_cmd->nd_family);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
 		pdsm = (enum papr_pdsm)nd_cmd->nd_command;
-
-		/* Verify if the pdsm command is valid */
 		if (pdsm <= PAPR_PDSM_MIN || pdsm >= PAPR_PDSM_MAX) {
-			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid PDSM\n",
-				pdsm);
+			DBG_MID("Invalid PDSM: 0x%x", pdsm);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
-		/* Have enough space to hold returned 'nd_pkg_pdsm' header */
 		if (nd_cmd->nd_size_out < ND_PDSM_HDR_SIZE) {
-			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid payload\n",
-				pdsm);
+			DBG_MID("Invalid payload for PDSM[0x%x]", pdsm);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
 	}
-
-	/* Let the command be further processed */
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_pdsm_fuel_gauge(struct papr_scm_priv *p,
 				union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	int rc, size;
 	u64 statval;
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 
-	/* Silently fail if fetching performance metrics isn't  supported */
-	if (!p->stat_buffer_len)
+	if (!p->stat_buffer_len) {
+		DBG_MID("stat_buffer_len is zero");
+		DBG_EXIT("rc=0");
 		return 0;
+	}
 
-	/* Allocate request buffer enough to hold single performance stat */
-	size = sizeof(struct papr_scm_perf_stats) +
-		sizeof(struct papr_scm_perf_stat);
-
+	size = sizeof(struct papr_scm_perf_stats) + sizeof(struct papr_scm_perf_stat);
 	stats = kzalloc(size, GFP_KERNEL);
-	if (!stats)
+	if (!stats) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
+	}
 
 	stat = &stats->scm_statistic[0];
 	memcpy(&stat->stat_id, "MemLife ", sizeof(stat->stat_id));
 	stat->stat_val = 0;
 
-	/* Fetch the fuel gauge and populate it in payload */
 	rc = drc_pmem_query_stats(p, stats, 1);
+	DBG_MID("drc_pmem_query_stats rc=%d", rc);
 	if (rc < 0) {
 		dev_dbg(&p->pdev->dev, "Err(%d) fetching fuel gauge\n", rc);
 		goto free_stats;
 	}
 
 	statval = be64_to_cpu(stat->stat_val);
-	dev_dbg(&p->pdev->dev,
-		"Fetched fuel-gauge %llu", statval);
-	payload->health.extension_flags |=
-		PDSM_DIMM_HEALTH_RUN_GAUGE_VALID;
+	dev_dbg(&p->pdev->dev, "Fetched fuel-gauge %llu", statval);
+	payload->health.extension_flags |= PDSM_DIMM_HEALTH_RUN_GAUGE_VALID;
 	payload->health.dimm_fuel_gauge = statval;
 
 	rc = sizeof(struct nd_papr_pdsm_health);
 
 free_stats:
 	kfree(stats);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -874,31 +867,32 @@ free_stats:
 static int papr_pdsm_dsc(struct papr_scm_priv *p,
 			 union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	payload->health.extension_flags |= PDSM_DIMM_DSC_VALID;
 	payload->health.dimm_dsc = p->dirty_shutdown_counter;
-
-	return sizeof(struct nd_papr_pdsm_health);
+	int rc = sizeof(struct nd_papr_pdsm_health);
+	DBG_EXIT("rc=%d", rc);
+	return rc;
 }
 
 /* Fetch the DIMM health info and populate it in provided package. */
 static int papr_pdsm_health(struct papr_scm_priv *p,
 			    union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	int rc;
 
-	/* Ensure dimm health mutex is taken preventing concurrent access */
 	rc = mutex_lock_interruptible(&p->health_mutex);
 	if (rc)
 		goto out;
 
-	/* Always fetch upto date dimm health data ignoring cached values */
 	rc = __drc_pmem_query_health(p);
+	DBG_MID("__drc_pmem_query_health rc=%d", rc);
 	if (rc) {
 		mutex_unlock(&p->health_mutex);
 		goto out;
 	}
 
-	/* update health struct with various flags derived from health bitmap */
 	payload->health = (struct nd_papr_pdsm_health) {
 		.extension_flags = 0,
 		.dimm_unarmed = !!(p->health_bitmap & PAPR_PMEM_UNARMED_MASK),
@@ -910,7 +904,6 @@ static int papr_pdsm_health(struct papr_scm_priv *p,
 		.dimm_health = PAPR_PDSM_DIMM_HEALTHY,
 	};
 
-	/* Update field dimm_health based on health_bitmap flags */
 	if (p->health_bitmap & PAPR_PMEM_HEALTH_FATAL)
 		payload->health.dimm_health = PAPR_PDSM_DIMM_FATAL;
 	else if (p->health_bitmap & PAPR_PMEM_HEALTH_CRITICAL)
@@ -918,17 +911,14 @@ static int papr_pdsm_health(struct papr_scm_priv *p,
 	else if (p->health_bitmap & PAPR_PMEM_HEALTH_UNHEALTHY)
 		payload->health.dimm_health = PAPR_PDSM_DIMM_UNHEALTHY;
 
-	/* struct populated hence can release the mutex now */
 	mutex_unlock(&p->health_mutex);
-
-	/* Populate the fuel gauge meter in the payload */
 	papr_pdsm_fuel_gauge(p, payload);
-	/* Populate the dirty-shutdown-counter field */
 	papr_pdsm_dsc(p, payload);
 
 	rc = sizeof(struct nd_papr_pdsm_health);
 
 out:
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -936,12 +926,12 @@ out:
 static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 				  union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	int rc;
 	u32 supported_flags = 0;
 	u64 inject_mask = 0, clear_mask = 0;
 	u64 mask;
 
-	/* Check for individual smart error flags and update inject/clear masks */
 	if (payload->smart_inject.flags & PDSM_SMART_INJECT_HEALTH_FATAL) {
 		supported_flags |= PDSM_SMART_INJECT_HEALTH_FATAL;
 		if (payload->smart_inject.fatal_enable)
@@ -958,28 +948,22 @@ static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 			clear_mask |= PAPR_PMEM_SHUTDOWN_DIRTY;
 	}
 
-	dev_dbg(&p->pdev->dev, "[Smart-inject] inject_mask=%#llx clear_mask=%#llx\n",
-		inject_mask, clear_mask);
-
-	/* Prevent concurrent access to dimm health bitmap related members */
+	DBG_MID("inject_mask=0x%llx, clear_mask=0x%llx", (unsigned long long)inject_mask, (unsigned long long)clear_mask);
 	rc = mutex_lock_interruptible(&p->health_mutex);
-	if (rc)
+	if (rc) {
+		DBG_MID("mutex_lock_interruptible failed, rc=%d", rc);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
-
-	/* Use inject/clear masks to set health_bitmap_inject_mask */
+	}
 	mask = READ_ONCE(p->health_bitmap_inject_mask);
 	mask = (mask & ~clear_mask) | inject_mask;
 	WRITE_ONCE(p->health_bitmap_inject_mask, mask);
-
-	/* Invalidate cached health bitmap */
 	p->lasthealth_jiffies = 0;
-
 	mutex_unlock(&p->health_mutex);
-
-	/* Return the supported flags back to userspace */
 	payload->smart_inject.flags = supported_flags;
-
-	return sizeof(struct nd_papr_pdsm_health);
+	rc = sizeof(struct nd_papr_pdsm_health);
+	DBG_EXIT("rc=%d", rc);
+	return rc;
 }
 
 /*
@@ -1032,9 +1016,12 @@ static const struct pdsm_cmd_desc __pdsm_cmd_descriptors[] = {
 /* Given a valid pdsm cmd return its command descriptor else return NULL */
 static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 {
-	if (cmd >= 0 || cmd < ARRAY_SIZE(__pdsm_cmd_descriptors))
+	DBG_ENTRY("cmd=%d", cmd);
+	if (cmd >= 0 || cmd < ARRAY_SIZE(__pdsm_cmd_descriptors)) {
+		DBG_EXIT("returning descriptor");
 		return &__pdsm_cmd_descriptors[cmd];
-
+	}
+	DBG_EXIT("returning NULL");
 	return NULL;
 }
 
