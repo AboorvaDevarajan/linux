@@ -239,24 +239,20 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 
 static int nd_label_validate(struct nvdimm_drvdata *ndd)
 {
-	/*
-	 * In order to probe for and validate namespace index blocks we
-	 * need to know the size of the labels, and we can't trust the
-	 * size of the labels until we validate the index blocks.
-	 * Resolve this dependency loop by probing for known label
-	 * sizes, but default to v1.2 256-byte namespace labels if
-	 * discovery fails.
-	 */
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	int label_size[] = { 128, 256 };
 	int i, rc;
 
 	for (i = 0; i < ARRAY_SIZE(label_size); i++) {
 		ndd->nslabel_size = label_size[i];
 		rc = __nd_label_validate(ndd);
-		if (rc >= 0)
+		if (rc >= 0) {
+			printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 			return rc;
+		}
 	}
 
+	printk(KERN_INFO "%s: EXIT: rc=-1\n", __func__);
 	return -1;
 }
 
@@ -433,233 +429,206 @@ int nd_label_reserve_dpa(struct nvdimm_drvdata *ndd)
 
 int nd_label_data_init(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	size_t config_size, read_size, max_xfer, offset;
 	struct nd_namespace_index *nsindex;
 	unsigned int i;
 	int rc = 0;
 	u32 nslot;
 
-	if (ndd->data)
+	if (ndd->data) {
+		printk(KERN_INFO "%s: EXIT: already initialized\n", __func__);
 		return 0;
+	}
 
 	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0 ||
 	    ndd->nsarea.config_size == 0) {
-		dev_dbg(ndd->dev, "failed to init config data area: (%u:%u)\n",
-			ndd->nsarea.max_xfer, ndd->nsarea.config_size);
+		printk(KERN_INFO "%s: EXIT: invalid nsarea\n", __func__);
 		return -ENXIO;
 	}
 
-	/*
-	 * We need to determine the maximum index area as this is the section
-	 * we must read and validate before we can start processing labels.
-	 *
-	 * If the area is too small to contain the two indexes and 2 labels
-	 * then we abort.
-	 *
-	 * Start at a label size of 128 as this should result in the largest
-	 * possible namespace index size.
-	 */
 	ndd->nslabel_size = 128;
 	read_size = sizeof_namespace_index(ndd) * 2;
-	if (!read_size)
+	if (!read_size) {
+		printk(KERN_INFO "%s: EXIT: read_size is zero\n", __func__);
 		return -ENXIO;
+	}
 
-	/* Allocate config data */
 	config_size = ndd->nsarea.config_size;
 	ndd->data = kvzalloc(config_size, GFP_KERNEL);
-	if (!ndd->data)
+	if (!ndd->data) {
+		printk(KERN_INFO "%s: EXIT: kvzalloc failed\n", __func__);
 		return -ENOMEM;
+	}
 
-	/*
-	 * We want to guarantee as few reads as possible while conserving
-	 * memory. To do that we figure out how much unused space will be left
-	 * in the last read, divide that by the total number of reads it is
-	 * going to take given our maximum transfer size, and then reduce our
-	 * maximum transfer size based on that result.
-	 */
 	max_xfer = min_t(size_t, ndd->nsarea.max_xfer, config_size);
 	if (read_size < max_xfer) {
-		/* trim waste */
 		max_xfer -= ((max_xfer - 1) - (config_size - 1) % max_xfer) /
 			    DIV_ROUND_UP(config_size, max_xfer);
-		/* make certain we read indexes in exactly 1 read */
 		if (max_xfer < read_size)
 			max_xfer = read_size;
 	}
-
-	/* Make our initial read size a multiple of max_xfer size */
 	read_size = min(DIV_ROUND_UP(read_size, max_xfer) * max_xfer,
 			config_size);
-
-	/* Read the index data */
 	rc = nvdimm_get_config_data(ndd, ndd->data, 0, read_size);
 	if (rc)
 		goto out_err;
-
-	/* Validate index data, if not valid assume all labels are invalid */
 	ndd->ns_current = nd_label_validate(ndd);
-	if (ndd->ns_current < 0)
+	if (ndd->ns_current < 0) {
+		printk(KERN_INFO "%s: EXIT: ns_current < 0\n", __func__);
 		return 0;
-
-	/* Record our index values */
+	}
 	ndd->ns_next = nd_label_next_nsindex(ndd->ns_current);
-
-	/* Copy "current" index on top of the "next" index */
 	nsindex = to_current_namespace_index(ndd);
 	nd_label_copy(ndd, to_next_namespace_index(ndd), nsindex);
-
-	/* Determine starting offset for label data */
 	offset = __le64_to_cpu(nsindex->labeloff);
 	nslot = __le32_to_cpu(nsindex->nslot);
-
-	/* Loop through the free list pulling in any active labels */
 	for (i = 0; i < nslot; i++, offset += ndd->nslabel_size) {
 		size_t label_read_size;
-
-		/* zero out the unused labels */
 		if (test_bit_le(i, nsindex->free)) {
 			memset(ndd->data + offset, 0, ndd->nslabel_size);
 			continue;
 		}
-
-		/* if we already read past here then just continue */
 		if (offset + ndd->nslabel_size <= read_size)
 			continue;
-
-		/* if we haven't read in a while reset our read_size offset */
 		if (read_size < offset)
 			read_size = offset;
-
-		/* determine how much more will be read after this next call. */
 		label_read_size = offset + ndd->nslabel_size - read_size;
-		label_read_size = DIV_ROUND_UP(label_read_size, max_xfer) *
-				  max_xfer;
-
-		/* truncate last read if needed */
+		label_read_size = DIV_ROUND_UP(label_read_size, max_xfer) * max_xfer;
 		if (read_size + label_read_size > config_size)
 			label_read_size = config_size - read_size;
-
-		/* Read the label data */
 		rc = nvdimm_get_config_data(ndd, ndd->data + read_size,
 					    read_size, label_read_size);
 		if (rc)
 			goto out_err;
-
-		/* push read_size to next read offset */
 		read_size += label_read_size;
 	}
-
-	dev_dbg(ndd->dev, "len: %zu rc: %d\n", offset, rc);
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
+	return rc;
 out_err:
+	printk(KERN_INFO "%s: EXIT: error rc=%d\n", __func__, rc);
 	return rc;
 }
 
 int nd_label_active_count(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot, slot;
 	int count = 0;
 
-	if (!preamble_current(ndd, &nsindex, &free, &nslot))
+	if (!preamble_current(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: preamble_current failed\n", __func__);
 		return 0;
+	}
 
 	for_each_clear_bit_le(slot, free, nslot) {
 		struct nd_namespace_label *nd_label;
-
 		nd_label = to_label(ndd, slot);
-
 		if (!slot_valid(ndd, nd_label, slot)) {
 			u32 label_slot = nsl_get_slot(ndd, nd_label);
 			u64 size = nsl_get_rawsize(ndd, nd_label);
 			u64 dpa = nsl_get_dpa(ndd, nd_label);
-
-			dev_dbg(ndd->dev,
-				"slot%d invalid slot: %d dpa: %llx size: %llx\n",
-					slot, label_slot, dpa, size);
 			continue;
 		}
 		count++;
 	}
+	printk(KERN_INFO "%s: EXIT: count=%d\n", __func__, count);
 	return count;
 }
 
 struct nd_namespace_label *nd_label_active(struct nvdimm_drvdata *ndd, int n)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, n=%d\n", __func__, ndd, n);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot, slot;
 
-	if (!preamble_current(ndd, &nsindex, &free, &nslot))
+	if (!preamble_current(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: preamble_current failed\n", __func__);
 		return NULL;
+	}
 
 	for_each_clear_bit_le(slot, free, nslot) {
 		struct nd_namespace_label *nd_label;
-
 		nd_label = to_label(ndd, slot);
 		if (!slot_valid(ndd, nd_label, slot))
 			continue;
-
-		if (n-- == 0)
+		if (n-- == 0) {
+			printk(KERN_INFO "%s: EXIT: found label=%p\n", __func__, nd_label);
 			return to_label(ndd, slot);
+		}
 	}
-
+	printk(KERN_INFO "%s: EXIT: not found\n", __func__);
 	return NULL;
 }
 
 u32 nd_label_alloc_slot(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot, slot;
 
-	if (!preamble_next(ndd, &nsindex, &free, &nslot))
+	if (!preamble_next(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: preamble_next failed\n", __func__);
 		return UINT_MAX;
-
-	WARN_ON(!is_nvdimm_bus_locked(ndd->dev));
+	}
 
 	slot = find_next_bit_le(free, nslot, 0);
-	if (slot == nslot)
+	if (slot == nslot) {
+		printk(KERN_INFO "%s: EXIT: no free slot\n", __func__);
 		return UINT_MAX;
+	}
 
 	clear_bit_le(slot, free);
-
+	printk(KERN_INFO "%s: EXIT: slot=%u\n", __func__, slot);
 	return slot;
 }
 
 bool nd_label_free_slot(struct nvdimm_drvdata *ndd, u32 slot)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, slot=%u\n", __func__, ndd, slot);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot;
 
-	if (!preamble_next(ndd, &nsindex, &free, &nslot))
+	if (!preamble_next(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: preamble_next failed\n", __func__);
 		return false;
+	}
 
-	WARN_ON(!is_nvdimm_bus_locked(ndd->dev));
-
-	if (slot < nslot)
-		return !test_and_set_bit_le(slot, free);
+	if (slot < nslot) {
+		bool ret = !test_and_set_bit_le(slot, free);
+		printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+		return ret;
+	}
+	printk(KERN_INFO "%s: EXIT: slot out of range\n", __func__);
 	return false;
 }
 
 u32 nd_label_nfree(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot;
 
-	WARN_ON(!is_nvdimm_bus_locked(ndd->dev));
-
-	if (!preamble_next(ndd, &nsindex, &free, &nslot))
+	if (!preamble_next(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: preamble_next failed\n", __func__);
 		return nvdimm_num_label_slots(ndd);
+	}
 
-	return bitmap_weight(free, nslot);
+	u32 ret = bitmap_weight(free, nslot);
+	printk(KERN_INFO "%s: EXIT: nfree=%u\n", __func__, ret);
+	return ret;
 }
 
 static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 		unsigned long flags)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, index=%d, seq=%u, flags=0x%lx\n", __func__, ndd, index, seq, flags);
 	struct nd_namespace_index *nsindex;
 	unsigned long offset;
 	u64 checksum;
@@ -707,8 +676,10 @@ static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 	nsindex->checksum = __cpu_to_le64(checksum);
 	rc = nvdimm_set_config_data(ndd, __le64_to_cpu(nsindex->myoff),
 			nsindex, sizeof_namespace_index(ndd));
-	if (rc < 0)
+	if (rc < 0) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_set_config_data failed rc=%d\n", __func__, rc);
 		return rc;
+	}
 
 	if (flags & ND_NSINDEX_INIT)
 		return 0;
@@ -720,7 +691,8 @@ static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 	ndd->ns_next = nd_label_next_nsindex(ndd->ns_next);
 	WARN_ON(ndd->ns_current == ndd->ns_next);
 
-	return 0;
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
+	return rc;
 }
 
 static unsigned long nd_label_offset(struct nvdimm_drvdata *ndd,
@@ -1057,6 +1029,7 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 int nd_pmem_namespace_label_update(struct nd_region *nd_region,
 		struct nd_namespace_pmem *nspm, resource_size_t size)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, nspm=%p, size=%pa\n", __func__, nd_region, nspm, &size);
 	int i, rc;
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
@@ -1099,11 +1072,13 @@ int nd_pmem_namespace_label_update(struct nd_region *nd_region,
 			return rc;
 	}
 
-	return 0;
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
+	return rc;
 }
 
 int __init nd_label_init(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	WARN_ON(guid_parse(NVDIMM_BTT_GUID, &nvdimm_btt_guid));
 	WARN_ON(guid_parse(NVDIMM_BTT2_GUID, &nvdimm_btt2_guid));
 	WARN_ON(guid_parse(NVDIMM_PFN_GUID, &nvdimm_pfn_guid));
@@ -1117,5 +1092,6 @@ int __init nd_label_init(void)
 	WARN_ON(uuid_parse(CXL_REGION_UUID, &cxl_region_uuid));
 	WARN_ON(uuid_parse(CXL_NAMESPACE_UUID, &cxl_namespace_uuid));
 
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 	return 0;
 }
