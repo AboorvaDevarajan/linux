@@ -274,12 +274,13 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 				    struct papr_scm_perf_stats *buff_stats,
 				    unsigned int num_stats)
 {
+	DBG_ENTRY("drc_index=0x%x, num_stats=%u, buff_stats=%p", p->drc_index, num_stats, buff_stats);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	size_t size;
 	s64 rc;
 
-	/* Setup the out buffer */
 	if (buff_stats) {
+		DBG_MID("Setting up out buffer: stats_version=%d, num_statistics=%u", PAPR_SCM_PERF_STATS_VERSION, num_stats);
 		memcpy(buff_stats->eye_catcher,
 		       PAPR_SCM_PERF_STATS_EYECATCHER, 8);
 		buff_stats->stats_version =
@@ -287,54 +288,59 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 		buff_stats->num_statistics =
 			cpu_to_be32(num_stats);
 
-		/*
-		 * Calculate the buffer size based on num-stats provided
-		 * or use the prefetched max buffer length
-		 */
 		if (num_stats)
-			/* Calculate size from the num_stats */
 			size = sizeof(struct papr_scm_perf_stats) +
 				num_stats * sizeof(struct papr_scm_perf_stat);
 		else
 			size = p->stat_buffer_len;
+		DBG_MID("Buffer size calculated: %zu", size);
 	} else {
-		/* In case of no out buffer ignore the size */
 		size = 0;
+		DBG_MID("No out buffer, size=0");
 	}
 
-	/* Do the HCALL asking PHYP for info */
+	DBG_MID("Calling plpar_hcall for performance stats, size=%zu", size);
 	rc = plpar_hcall(H_SCM_PERFORMANCE_STATS, ret, p->drc_index,
 			 buff_stats ? virt_to_phys(buff_stats) : 0,
 			 size);
+	DBG_MID("plpar_hcall rc=%lld, ret[0]=%llx", rc, (unsigned long long)ret[0]);
 
-	/* Check if the error was due to an unknown stat-id */
 	if (rc == H_PARTIAL) {
 		dev_err(&p->pdev->dev,
-			"Unknown performance stats, Err:0x%016lX\n", ret[0]);
+			"Unknown performance stats, Err:0x%016llX\n", (unsigned long long)ret[0]);
+		DBG_MID("H_PARTIAL error, returning -ENOENT");
+		DBG_EXIT("rc=%d", -ENOENT);
 		return -ENOENT;
 	} else if (rc == H_AUTHORITY) {
 		dev_info(&p->pdev->dev,
 			 "Permission denied while accessing performance stats");
+		DBG_MID("H_AUTHORITY error, returning -EPERM");
+		DBG_EXIT("rc=%d", -EPERM);
 		return -EPERM;
 	} else if (rc == H_UNSUPPORTED) {
 		dev_dbg(&p->pdev->dev, "Performance stats unsupported\n");
+		DBG_MID("H_UNSUPPORTED error, returning -EOPNOTSUPP");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
 	} else if (rc != H_SUCCESS) {
 		dev_err(&p->pdev->dev,
 			"Failed to query performance stats, Err:%lld\n", rc);
+		DBG_MID("General error, returning -EIO");
+		DBG_EXIT("rc=%d", -EIO);
 		return -EIO;
-
 	} else if (!size) {
-		/* Handle case where stat buffer size was requested */
 		dev_dbg(&p->pdev->dev,
-			"Performance stats size %ld\n", ret[0]);
+			"Performance stats size %lld\n", (long long)ret[0]);
+		DBG_MID("Queried stat buffer size: %lld", (long long)ret[0]);
+		DBG_EXIT("rc=%lld", (long long)ret[0]);
 		return ret[0];
 	}
 
-	/* Successfully fetched the requested stats from phyp */
 	dev_dbg(&p->pdev->dev,
 		"Performance stats returned %d stats\n",
 		be32_to_cpu(buff_stats->num_statistics));
+	DBG_MID("Performance stats successfully fetched");
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -362,91 +368,113 @@ static const char * const nvdimm_events_map[] = {
 
 static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, u64 *count)
 {
+	DBG_ENTRY("event config=%llu", event->attr.config);
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct papr_scm_priv *p = dev_get_drvdata(dev);
 	int rc, size;
 
-	/* Invalid eventcode */
-	if (event->attr.config == 0 || event->attr.config >= ARRAY_SIZE(nvdimm_events_map))
+	if (event->attr.config == 0 || event->attr.config >= ARRAY_SIZE(nvdimm_events_map)) {
+		DBG_MID("Invalid event config: %llu");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
-	/* Allocate request buffer enough to hold single performance stat */
-	size = sizeof(struct papr_scm_perf_stats) +
-		sizeof(struct papr_scm_perf_stat);
-
-	if (!p)
+	size = sizeof(struct papr_scm_perf_stats) + sizeof(struct papr_scm_perf_stat);
+	if (!p) {
+		DBG_MID("Provider data is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	stats = kzalloc(size, GFP_KERNEL);
-	if (!stats)
+	if (!stats) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
+	}
 
 	stat = &stats->scm_statistic[0];
-	memcpy(&stat->stat_id,
-	       nvdimm_events_map[event->attr.config],
-		sizeof(stat->stat_id));
+	memcpy(&stat->stat_id, nvdimm_events_map[event->attr.config], sizeof(stat->stat_id));
 	stat->stat_val = 0;
 
 	rc = drc_pmem_query_stats(p, stats, 1);
 	if (rc < 0) {
+		DBG_MID("drc_pmem_query_stats failed, rc=%d", rc);
 		kfree(stats);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
 	}
 
 	*count = be64_to_cpu(stat->stat_val);
 	kfree(stats);
+	DBG_EXIT("rc=0, count=%llu", *count);
 	return 0;
 }
 
 static int papr_scm_pmu_event_init(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 	struct papr_scm_priv *p;
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
-	/* test the event attr type for PMU enumeration */
-	if (event->attr.type != event->pmu->type)
+	}
+	if (event->attr.type != event->pmu->type) {
+		DBG_MID("event type mismatch");
+		DBG_EXIT("rc=%d", -ENOENT);
 		return -ENOENT;
-
-	/* it does not support event sampling mode */
-	if (is_sampling_event(event))
+	}
+	if (is_sampling_event(event)) {
+		DBG_MID("sampling event not supported");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
-
-	/* no branch sampling */
-	if (has_branch_stack(event))
+	}
+	if (has_branch_stack(event)) {
+		DBG_MID("branch stack not supported");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
-
+	}
 	p = (struct papr_scm_priv *)nd_pmu->dev->driver_data;
-	if (!p)
+	if (!p) {
+		DBG_MID("provider data is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
-	/* Invalid eventcode */
-	if (event->attr.config == 0 || event->attr.config > 16)
+	}
+	if (event->attr.config == 0 || event->attr.config > 16) {
+		DBG_MID("invalid event config: %llu", event->attr.config);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
+	}
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_scm_pmu_add(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	u64 count;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
+	}
 	if (flags & PERF_EF_START) {
 		rc = papr_scm_pmu_get_value(event, nd_pmu->dev, &count);
-		if (rc)
+		if (rc) {
+			DBG_MID("papr_scm_pmu_get_value failed, rc=%d", rc);
+			DBG_EXIT("rc=%d", rc);
 			return rc;
-
+		}
 		local64_set(&event->hw.prev_count, count);
 	}
-
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
