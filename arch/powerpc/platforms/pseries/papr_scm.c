@@ -111,7 +111,7 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 	long rc;
 
 	dev_dbg(&p->pdev->dev, "flush drc 0x%x", p->drc_index);
-	DBG_MID("About to start flush loop for drc_index=0x%x", p->drc_index);
+	DBG_MID("About to start flush loop for drc_index=0x%x", (unsigned long long)p->drc_index);
 	do {
 		rc = plpar_hcall(H_SCM_FLUSH, ret_buf, p->drc_index, token);
 		DBG_MID("plpar_hcall returned rc=%ld, token=%lx", rc, token);
@@ -130,11 +130,11 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 
 	if (rc) {
 		dev_err(&p->pdev->dev, "flush error: %ld", rc);
-		DBG_MID("Flush error: %ld", rc);
+		DBG_MID("Flush error: %ld", (unsigned long long)rc);
 		rc = -EIO;
 	} else {
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
-		DBG_MID("Flush complete for drc_index=0x%x", p->drc_index);
+		DBG_MID("Flush complete for drc_index=0x%x", (unsigned long long)p->drc_index);
 	}
 
 	DBG_EXIT("rc=%ld", rc);
@@ -153,7 +153,7 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	int64_t rc;
 
 	token = 0;
-	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", p->drc_index, p->blocks);
+	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", (unsigned long long)p->drc_index, (unsigned long long)p->blocks);
 	do {
 		rc = plpar_hcall(H_SCM_BIND_MEM, ret, p->drc_index, 0,
 				p->blocks, BIND_ANY_ADDR, token);
@@ -368,14 +368,14 @@ static const char * const nvdimm_events_map[] = {
 
 static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, u64 *count)
 {
-	DBG_ENTRY("event config=%llu", event->attr.config);
+	DBG_ENTRY("event config=%llu", (unsigned long long)event->attr.config);
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct papr_scm_priv *p = dev_get_drvdata(dev);
 	int rc, size;
 
 	if (event->attr.config == 0 || event->attr.config >= ARRAY_SIZE(nvdimm_events_map)) {
-		DBG_MID("Invalid event config: %llu");
+		DBG_MID("Invalid event config: %llu", (unsigned long long)event->attr.config);
 		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
@@ -445,7 +445,7 @@ static int papr_scm_pmu_event_init(struct perf_event *event)
 		return -EINVAL;
 	}
 	if (event->attr.config == 0 || event->attr.config > 16) {
-		DBG_MID("invalid event config: %llu", event->attr.config);
+		DBG_MID("invalid event config: %llu", (unsigned long long)event->attr.config);
 		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
