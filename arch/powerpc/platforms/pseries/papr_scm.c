@@ -23,6 +23,16 @@
 #include <linux/unaligned.h>
 #include <linux/perf_event.h>
 
+#define DEBUG_TRACE_ENTRY_EXIT 1
+
+#if DEBUG_TRACE_ENTRY_EXIT
+#define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define DBG_ENTRY(fmt, ...)
+#define DBG_EXIT(fmt, ...)
+#endif
+
 #define BIND_ANY_ADDR (~0ul)
 
 #define PAPR_SCM_DIMM_CMD_MASK \
@@ -91,6 +101,7 @@ struct papr_scm_priv {
 static int papr_scm_pmem_flush(struct nd_region *nd_region,
 			       struct bio *bio __maybe_unused)
 {
+	DBG_ENTRY("");
 	struct papr_scm_priv *p = nd_region_provider_data(nd_region);
 	unsigned long ret_buf[PLPAR_HCALL_BUFSIZE], token = 0;
 	long rc;
@@ -117,6 +128,7 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
 	}
 
+	DBG_EXIT("rc=%ld", rc);
 	return rc;
 }
 
@@ -125,6 +137,7 @@ static DEFINE_MUTEX(papr_ndr_lock);
 
 static int drc_pmem_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t saved = 0;
 	uint64_t token;
@@ -153,11 +166,13 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	p->bound_addr = saved;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n",
 		p->drc_index, (unsigned long)saved);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)p->bound_addr);
 	return rc;
 }
 
 static void drc_pmem_unbind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t token = 0;
 	int64_t rc;
@@ -188,11 +203,13 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 		dev_dbg(&p->pdev->dev, "unbind drc 0x%x complete\n",
 			p->drc_index);
 
+	DBG_EXIT("");
 	return;
 }
 
 static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
@@ -217,6 +234,7 @@ static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 
 	p->bound_addr = start_addr;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, start_addr);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)p->bound_addr);
 	return rc;
 
 err_out:
@@ -242,6 +260,7 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 				    struct papr_scm_perf_stats *buff_stats,
 				    unsigned int num_stats)
 {
+	DBG_ENTRY("drc_index=0x%x, num_stats=%u, buff_stats=%p", p->drc_index, num_stats, buff_stats);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	size_t size;
 	s64 rc;
@@ -303,6 +322,7 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 	dev_dbg(&p->pdev->dev,
 		"Performance stats returned %d stats\n",
 		be32_to_cpu(buff_stats->num_statistics));
+	DBG_EXIT("rc=%lld", rc);
 	return 0;
 }
 
@@ -330,6 +350,7 @@ static const char * const nvdimm_events_map[] = {
 
 static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, u64 *count)
 {
+	DBG_ENTRY("event config=%llu", event->attr.config);
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct papr_scm_priv *p = dev_get_drvdata(dev);
@@ -364,11 +385,13 @@ static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, 
 
 	*count = be64_to_cpu(stat->stat_val);
 	kfree(stats);
+	DBG_EXIT("rc=%d, count=%llu", rc, *count);
 	return 0;
 }
 
 static int papr_scm_pmu_event_init(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 	struct papr_scm_priv *p;
 
@@ -395,11 +418,13 @@ static int papr_scm_pmu_event_init(struct perf_event *event)
 	if (event->attr.config == 0 || event->attr.config > 16)
 		return -EINVAL;
 
+	DBG_EXIT("rc=%d", 0);
 	return 0;
 }
 
 static int papr_scm_pmu_add(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	u64 count;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
@@ -415,11 +440,13 @@ static int papr_scm_pmu_add(struct perf_event *event, int flags)
 		local64_set(&event->hw.prev_count, count);
 	}
 
+	DBG_EXIT("rc=%d", rc);
 	return 0;
 }
 
 static void papr_scm_pmu_read(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	u64 prev, now;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
@@ -433,15 +460,19 @@ static void papr_scm_pmu_read(struct perf_event *event)
 
 	prev = local64_xchg(&event->hw.prev_count, now);
 	local64_add(now - prev, &event->count);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_del(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	papr_scm_pmu_read(event);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_register(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	struct nvdimm_pmu *nd_pmu;
 	int rc, nodeid;
 
@@ -479,6 +510,7 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p)
 	 * unregistering of pmu device.
 	 */
 	p->pdev->archdata.priv = nd_pmu;
+	DBG_EXIT("");
 	return;
 
 pmu_check_events_err:
@@ -497,6 +529,7 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p) { }
  */
 static int __drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	u64 bitmap = 0;
 	long rc;
@@ -525,6 +558,7 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 		"Queried dimm health info. Bitmap:0x%016lx Mask:0x%016lx\n",
 		ret[0], ret[1]);
 
+	DBG_EXIT("rc=%ld", rc);
 	return 0;
 }
 
@@ -534,6 +568,7 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 /* Query cached health info and if needed call drc_pmem_query_health */
 static int drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long cache_timeout;
 	int rc;
 
@@ -554,12 +589,14 @@ static int drc_pmem_query_health(struct papr_scm_priv *p)
 		rc = 0;
 
 	mutex_unlock(&p->health_mutex);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static int papr_scm_meta_get(struct papr_scm_priv *p,
 			     struct nd_cmd_get_config_data_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
 	unsigned long data[PLPAR_HCALL_BUFSIZE];
 	unsigned long offset, data_offset;
 	int len, read;
@@ -607,12 +644,14 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 			break;
 		}
 	}
+	DBG_EXIT("ret=0");
 	return 0;
 }
 
 static int papr_scm_meta_set(struct papr_scm_priv *p,
 			     struct nd_cmd_set_config_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
 	unsigned long offset, data_offset;
 	int len, wrote;
 	unsigned long data;
@@ -655,6 +694,7 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 			return -EINVAL; /* other invalid parameter */
 	}
 
+	DBG_EXIT("ret=0");
 	return 0;
 }
 
@@ -666,6 +706,7 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			unsigned int buf_len)
 {
+	DBG_ENTRY("cmd=%u, buf_len=%u", cmd, buf_len);
 	unsigned long cmd_mask = PAPR_SCM_DIMM_CMD_MASK;
 	struct nd_cmd_pkg *nd_cmd;
 	struct papr_scm_priv *p;
@@ -720,12 +761,14 @@ static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 	}
 
 	/* Let the command be further processed */
+	DBG_EXIT("rc=%d", 0);
 	return 0;
 }
 
 static int papr_pdsm_fuel_gauge(struct papr_scm_priv *p,
 				union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc, size;
 	u64 statval;
 	struct papr_scm_perf_stat *stat;
@@ -765,6 +808,7 @@ static int papr_pdsm_fuel_gauge(struct papr_scm_priv *p,
 
 free_stats:
 	kfree(stats);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -772,9 +816,11 @@ free_stats:
 static int papr_pdsm_dsc(struct papr_scm_priv *p,
 			 union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	payload->health.extension_flags |= PDSM_DIMM_DSC_VALID;
 	payload->health.dimm_dsc = p->dirty_shutdown_counter;
 
+	DBG_EXIT("ret=%lu", (unsigned long)sizeof(struct nd_papr_pdsm_health));
 	return sizeof(struct nd_papr_pdsm_health);
 }
 
@@ -782,6 +828,7 @@ static int papr_pdsm_dsc(struct papr_scm_priv *p,
 static int papr_pdsm_health(struct papr_scm_priv *p,
 			    union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc;
 
 	/* Ensure dimm health mutex is taken preventing concurrent access */
@@ -827,6 +874,7 @@ static int papr_pdsm_health(struct papr_scm_priv *p,
 	rc = sizeof(struct nd_papr_pdsm_health);
 
 out:
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -834,6 +882,7 @@ out:
 static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 				  union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc;
 	u32 supported_flags = 0;
 	u64 inject_mask = 0, clear_mask = 0;
@@ -877,7 +926,8 @@ static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 	/* Return the supported flags back to userspace */
 	payload->smart_inject.flags = supported_flags;
 
-	return sizeof(struct nd_papr_pdsm_health);
+	DBG_EXIT("rc=%d", rc);
+	return rc;
 }
 
 /*
@@ -943,6 +993,7 @@ static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 				 struct nd_cmd_pkg *pkg)
 {
+	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x", p->drc_index, pkg->nd_command);
 	/* Get the PDSM header and PDSM command */
 	struct nd_pkg_pdsm *pdsm_pkg = (struct nd_pkg_pdsm *)pkg->nd_payload;
 	enum papr_pdsm pdsm = (enum papr_pdsm)pkg->nd_command;
@@ -998,6 +1049,7 @@ static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 		pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
 	}
 
+	DBG_EXIT("rc=%d", pdsm_pkg->cmd_status);
 	return pdsm_pkg->cmd_status;
 }
 
@@ -1005,6 +1057,7 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 			  struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			  unsigned int buf_len, int *cmd_rc)
 {
+	DBG_ENTRY("cmd=0x%x, buf_len=%u", cmd, buf_len);
 	struct nd_cmd_get_config_size *get_size_hdr;
 	struct nd_cmd_pkg *call_pkg = NULL;
 	struct papr_scm_priv *p;
@@ -1052,6 +1105,7 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 
 	dev_dbg(&p->pdev->dev, "returned with cmd_rc = %d\n", *cmd_rc);
 
+	DBG_EXIT("rc=%d", *cmd_rc);
 	return 0;
 }
 
@@ -1059,11 +1113,14 @@ static ssize_t health_bitmap_inject_show(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
 {
+	DBG_ENTRY("");
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
 
-	return sprintf(buf, "%#llx\n",
+	ssize_t ret = sprintf(buf, "%#llx\n",
 		       READ_ONCE(p->health_bitmap_inject_mask));
+	DBG_EXIT("ret=%ld", ret);
+	return ret;
 }
 
 static DEVICE_ATTR_ADMIN_RO(health_bitmap_inject);
@@ -1071,6 +1128,7 @@ static DEVICE_ATTR_ADMIN_RO(health_bitmap_inject);
 static ssize_t perf_stats_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
+	DBG_ENTRY("");
 	int index;
 	ssize_t rc;
 	struct seq_buf s;
@@ -1107,6 +1165,7 @@ static ssize_t perf_stats_show(struct device *dev,
 
 free_stats:
 	kfree(stats);
+	DBG_EXIT("rc=%zd", rc ? rc : (ssize_t)seq_buf_used(&s));
 	return rc ? rc : (ssize_t)seq_buf_used(&s);
 }
 static DEVICE_ATTR_ADMIN_RO(perf_stats);
@@ -1114,6 +1173,7 @@ static DEVICE_ATTR_ADMIN_RO(perf_stats);
 static ssize_t flags_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
+	DBG_ENTRY("");
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
 	struct seq_buf s;
@@ -1149,6 +1209,7 @@ static ssize_t flags_show(struct device *dev,
 	if (seq_buf_used(&s))
 		seq_buf_printf(&s, "\n");
 
+	DBG_EXIT("ret=%ld", (long)seq_buf_used(&s));
 	return seq_buf_used(&s);
 }
 DEVICE_ATTR_RO(flags);
@@ -1156,16 +1217,20 @@ DEVICE_ATTR_RO(flags);
 static ssize_t dirty_shutdown_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
+	DBG_ENTRY("");
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
 
-	return sysfs_emit(buf, "%llu\n", p->dirty_shutdown_counter);
+	ssize_t ret = sysfs_emit(buf, "%llu\n", p->dirty_shutdown_counter);
+	DBG_EXIT("ret=%ld", ret);
+	return ret;
 }
 DEVICE_ATTR_RO(dirty_shutdown);
 
 static umode_t papr_nd_attribute_visible(struct kobject *kobj,
 					 struct attribute *attr, int n)
 {
+	DBG_ENTRY("");
 	struct device *dev = kobj_to_dev(kobj);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(nvdimm);
@@ -1174,7 +1239,8 @@ static umode_t papr_nd_attribute_visible(struct kobject *kobj,
 	if (attr == &dev_attr_perf_stats.attr && p->stat_buffer_len == 0)
 		return 0;
 
-	return attr->mode;
+	DBG_EXIT("ret=%u", (unsigned)ret);
+	return ret;
 }
 
 /* papr_scm specific dimm attributes */
@@ -1199,6 +1265,7 @@ static const struct attribute_group *papr_nd_attr_groups[] = {
 
 static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	struct device *dev = &p->pdev->dev;
 	struct nd_mapping_desc mapping;
 	struct nd_region_desc ndr_desc;
@@ -1288,6 +1355,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	list_add_tail(&p->region_list, &papr_nd_regions);
 	mutex_unlock(&papr_ndr_lock);
 
+	DBG_EXIT("rc=%d", 0);
 	return 0;
 
 err:	nvdimm_bus_unregister(p->bus);
@@ -1298,6 +1366,7 @@ err:	nvdimm_bus_unregister(p->bus);
 static void papr_scm_add_badblock(struct nd_region *region,
 				  struct nvdimm_bus *bus, u64 phys_addr)
 {
+	DBG_ENTRY("phys_addr=0x%llx", phys_addr);
 	u64 aligned_addr = ALIGN_DOWN(phys_addr, L1_CACHE_BYTES);
 
 	if (nvdimm_bus_add_badrange(bus, aligned_addr, L1_CACHE_BYTES)) {
@@ -1309,11 +1378,13 @@ static void papr_scm_add_badblock(struct nd_region *region,
 		 aligned_addr, aligned_addr + L1_CACHE_BYTES);
 
 	nvdimm_region_notify(region, NVDIMM_REVALIDATE_POISON);
+	DBG_EXIT("");
 }
 
 static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 			 void *data)
 {
+	DBG_ENTRY("");
 	struct machine_check_event *evt = data;
 	struct papr_scm_priv *p;
 	u64 phys_addr;
@@ -1350,6 +1421,7 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 
 	mutex_unlock(&papr_ndr_lock);
 
+	DBG_EXIT("ret=%d", found ? NOTIFY_OK : NOTIFY_DONE);
 	return found ? NOTIFY_OK : NOTIFY_DONE;
 }
 
@@ -1359,6 +1431,7 @@ static struct notifier_block mce_ue_nb = {
 
 static int papr_scm_probe(struct platform_device *pdev)
 {
+	DBG_ENTRY("");
 	struct device_node *dn = pdev->dev.of_node;
 	u32 drc_index, metadata_size;
 	u64 blocks, block_size;
@@ -1476,7 +1549,8 @@ static int papr_scm_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, p);
 	papr_scm_pmu_register(p);
 
-	return 0;
+	DBG_EXIT("rc=%d", rc);
+	return rc;
 
 err2:	drc_pmem_unbind(p);
 err:	kfree(p);
@@ -1485,6 +1559,7 @@ err:	kfree(p);
 
 static void papr_scm_remove(struct platform_device *pdev)
 {
+	DBG_ENTRY("");
 	struct papr_scm_priv *p = platform_get_drvdata(pdev);
 
 	mutex_lock(&papr_ndr_lock);
@@ -1500,6 +1575,7 @@ static void papr_scm_remove(struct platform_device *pdev)
 	pdev->archdata.priv = NULL;
 	kfree(p->bus_desc.provider_name);
 	kfree(p);
+	DBG_EXIT("");
 }
 
 static const struct of_device_id papr_scm_match[] = {
@@ -1519,20 +1595,24 @@ static struct platform_driver papr_scm_driver = {
 
 static int __init papr_scm_init(void)
 {
+	DBG_ENTRY("");
 	int ret;
 
 	ret = platform_driver_register(&papr_scm_driver);
 	if (!ret)
 		mce_register_notifier(&mce_ue_nb);
 
+	DBG_EXIT("ret=%d", ret);
 	return ret;
 }
 module_init(papr_scm_init);
 
 static void __exit papr_scm_exit(void)
 {
+	DBG_ENTRY("");
 	mce_unregister_notifier(&mce_ue_nb);
 	platform_driver_unregister(&papr_scm_driver);
+	DBG_EXIT("");
 }
 module_exit(papr_scm_exit);
 
