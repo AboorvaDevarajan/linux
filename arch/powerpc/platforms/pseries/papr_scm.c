@@ -23,6 +23,18 @@
 #include <linux/unaligned.h>
 #include <linux/perf_event.h>
 
+// Debug macros for tracing
+#define DEBUG_TRACE_ENTRY_EXIT 1
+#if DEBUG_TRACE_ENTRY_EXIT
+#define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define DBG_ENTRY(fmt, ...)
+#define DBG_EXIT(fmt, ...)
+#define DBG_MID(fmt, ...)
+#endif
+
 #define BIND_ANY_ADDR (~0ul)
 
 #define PAPR_SCM_DIMM_CMD_MASK \
@@ -91,32 +103,38 @@ struct papr_scm_priv {
 static int papr_scm_pmem_flush(struct nd_region *nd_region,
 			       struct bio *bio __maybe_unused)
 {
+	DBG_ENTRY("");
 	struct papr_scm_priv *p = nd_region_provider_data(nd_region);
 	unsigned long ret_buf[PLPAR_HCALL_BUFSIZE], token = 0;
 	long rc;
 
 	dev_dbg(&p->pdev->dev, "flush drc 0x%x", p->drc_index);
-
+	DBG_MID("About to start flush loop for drc_index=0x%x", p->drc_index);
 	do {
 		rc = plpar_hcall(H_SCM_FLUSH, ret_buf, p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%ld, token=%lx", rc, token);
 		token = ret_buf[0];
 
-		/* Check if we are stalled for some time */
 		if (H_IS_LONG_BUSY(rc)) {
+			DBG_MID("H_IS_LONG_BUSY detected, sleeping for %d ms", get_longbusy_msecs(rc));
 			msleep(get_longbusy_msecs(rc));
 			rc = H_BUSY;
 		} else if (rc == H_BUSY) {
+			DBG_MID("H_BUSY detected, calling cond_resched()");
 			cond_resched();
 		}
 	} while (rc == H_BUSY);
 
 	if (rc) {
 		dev_err(&p->pdev->dev, "flush error: %ld", rc);
+		DBG_MID("Flush error: %ld", rc);
 		rc = -EIO;
 	} else {
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
+		DBG_MID("Flush complete for drc_index=0x%x", p->drc_index);
 	}
 
+	DBG_EXIT("rc=%ld", rc);
 	return rc;
 }
 
@@ -125,6 +143,7 @@ static DEFINE_MUTEX(papr_ndr_lock);
 
 static int drc_pmem_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t saved = 0;
 	uint64_t token;
@@ -138,9 +157,11 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	 */
 	token = 0;
 
+	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", p->drc_index, p->blocks);
 	do {
 		rc = plpar_hcall(H_SCM_BIND_MEM, ret, p->drc_index, 0,
 				p->blocks, BIND_ANY_ADDR, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx, ret[1]=%lx", rc, token, ret[0], ret[1]);
 		token = ret[0];
 		if (!saved)
 			saved = ret[1];
@@ -148,16 +169,20 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	} while (rc == H_BUSY);
 
 	if (rc)
-		return rc;
+		DBG_MID("Bind failed with rc=%lld", rc);
+	else
+		DBG_MID("Bind succeeded, saved=0x%llx", saved);
 
 	p->bound_addr = saved;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n",
 		p->drc_index, (unsigned long)saved);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)saved);
 	return rc;
 }
 
 static void drc_pmem_unbind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t token = 0;
 	int64_t rc;
@@ -170,13 +195,16 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 		/* Unbind of all SCM resources associated with drcIndex */
 		rc = plpar_hcall(H_SCM_UNBIND_ALL, ret, H_UNBIND_SCOPE_DRC,
 				 p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx", rc, token, ret[0]);
 		token = ret[0];
 
 		/* Check if we are stalled for some time */
 		if (H_IS_LONG_BUSY(rc)) {
+			DBG_MID("H_IS_LONG_BUSY detected, sleeping for %d ms", get_longbusy_msecs(rc));
 			msleep(get_longbusy_msecs(rc));
 			rc = H_BUSY;
 		} else if (rc == H_BUSY) {
+			DBG_MID("H_BUSY detected, calling cond_resched()");
 			cond_resched();
 		}
 
@@ -188,42 +216,53 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 		dev_dbg(&p->pdev->dev, "unbind drc 0x%x complete\n",
 			p->drc_index);
 
+	DBG_EXIT("");
 	return;
 }
 
 static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	int64_t rc;
 
-
+	DBG_MID("Querying block mem binding for start");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, 0);
+	DBG_MID("plpar_hcall (start) rc=%lld, ret[0]=%lx", rc, ret[0]);
 	if (rc)
 		goto err_out;
 	start_addr = ret[0];
 
-	/* Make sure the full region is bound. */
+	DBG_MID("Querying block mem binding for end");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, p->blocks - 1);
+	DBG_MID("plpar_hcall (end) rc=%lld, ret[0]=%lx", rc, ret[0]);
 	if (rc)
 		goto err_out;
 	end_addr = ret[0];
 
-	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size))
+	DBG_MID("start_addr=0x%lx, end_addr=0x%lx, expected diff=0x%llx", start_addr, end_addr, (p->blocks - 1) * p->block_size);
+	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size)) {
+		DBG_MID("Address range mismatch: (end-start)=0x%lx", end_addr - start_addr);
 		goto err_out;
+	}
 
 	p->bound_addr = start_addr;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, start_addr);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)saved);
 	return rc;
 
 err_out:
 	dev_info(&p->pdev->dev,
 		 "Failed to query, trying an unbind followed by bind");
+	DBG_MID("Calling drc_pmem_unbind and drc_pmem_bind");
 	drc_pmem_unbind(p);
-	return drc_pmem_bind(p);
+	rc = drc_pmem_bind(p);
+	DBG_EXIT("rc=%ld (after unbind/bind)", rc);
+	return rc;
 }
 
 /*
@@ -242,12 +281,13 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 				    struct papr_scm_perf_stats *buff_stats,
 				    unsigned int num_stats)
 {
+	DBG_ENTRY("drc_index=0x%x, num_stats=%u, buff_stats=%p", p->drc_index, num_stats, buff_stats);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	size_t size;
 	s64 rc;
 
-	/* Setup the out buffer */
 	if (buff_stats) {
+		DBG_MID("Setting up out buffer: stats_version=%d, num_statistics=%u", PAPR_SCM_PERF_STATS_VERSION, num_stats);
 		memcpy(buff_stats->eye_catcher,
 		       PAPR_SCM_PERF_STATS_EYECATCHER, 8);
 		buff_stats->stats_version =
@@ -255,54 +295,59 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 		buff_stats->num_statistics =
 			cpu_to_be32(num_stats);
 
-		/*
-		 * Calculate the buffer size based on num-stats provided
-		 * or use the prefetched max buffer length
-		 */
 		if (num_stats)
-			/* Calculate size from the num_stats */
 			size = sizeof(struct papr_scm_perf_stats) +
 				num_stats * sizeof(struct papr_scm_perf_stat);
 		else
 			size = p->stat_buffer_len;
+		DBG_MID("Buffer size calculated: %zu", size);
 	} else {
-		/* In case of no out buffer ignore the size */
 		size = 0;
+		DBG_MID("No out buffer, size=0");
 	}
 
-	/* Do the HCALL asking PHYP for info */
+	DBG_MID("Calling plpar_hcall for performance stats, size=%zu", size);
 	rc = plpar_hcall(H_SCM_PERFORMANCE_STATS, ret, p->drc_index,
 			 buff_stats ? virt_to_phys(buff_stats) : 0,
 			 size);
+	DBG_MID("plpar_hcall rc=%lld, ret[0]=%lx", rc, ret[0]);
 
-	/* Check if the error was due to an unknown stat-id */
 	if (rc == H_PARTIAL) {
 		dev_err(&p->pdev->dev,
 			"Unknown performance stats, Err:0x%016lX\n", ret[0]);
+		DBG_MID("H_PARTIAL error, returning -ENOENT");
+		DBG_EXIT("rc=%d", -ENOENT);
 		return -ENOENT;
 	} else if (rc == H_AUTHORITY) {
 		dev_info(&p->pdev->dev,
 			 "Permission denied while accessing performance stats");
+		DBG_MID("H_AUTHORITY error, returning -EPERM");
+		DBG_EXIT("rc=%d", -EPERM);
 		return -EPERM;
 	} else if (rc == H_UNSUPPORTED) {
 		dev_dbg(&p->pdev->dev, "Performance stats unsupported\n");
+		DBG_MID("H_UNSUPPORTED error, returning -EOPNOTSUPP");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
 	} else if (rc != H_SUCCESS) {
 		dev_err(&p->pdev->dev,
 			"Failed to query performance stats, Err:%lld\n", rc);
+		DBG_MID("General error, returning -EIO");
+		DBG_EXIT("rc=%d", -EIO);
 		return -EIO;
-
 	} else if (!size) {
-		/* Handle case where stat buffer size was requested */
 		dev_dbg(&p->pdev->dev,
 			"Performance stats size %ld\n", ret[0]);
+		DBG_MID("Queried stat buffer size: %ld", ret[0]);
+		DBG_EXIT("rc=%ld", ret[0]);
 		return ret[0];
 	}
 
-	/* Successfully fetched the requested stats from phyp */
 	dev_dbg(&p->pdev->dev,
 		"Performance stats returned %d stats\n",
 		be32_to_cpu(buff_stats->num_statistics));
+	DBG_MID("Performance stats successfully fetched");
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -330,161 +375,187 @@ static const char * const nvdimm_events_map[] = {
 
 static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, u64 *count)
 {
+	DBG_ENTRY("event config=%llu", event->attr.config);
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct papr_scm_priv *p = dev_get_drvdata(dev);
 	int rc, size;
 
-	/* Invalid eventcode */
-	if (event->attr.config == 0 || event->attr.config >= ARRAY_SIZE(nvdimm_events_map))
+	if (event->attr.config == 0 || event->attr.config >= ARRAY_SIZE(nvdimm_events_map)) {
+		DBG_MID("Invalid event config: %llu");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
-	/* Allocate request buffer enough to hold single performance stat */
-	size = sizeof(struct papr_scm_perf_stats) +
-		sizeof(struct papr_scm_perf_stat);
-
-	if (!p)
+	size = sizeof(struct papr_scm_perf_stats) + sizeof(struct papr_scm_perf_stat);
+	if (!p) {
+		DBG_MID("Provider data is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	stats = kzalloc(size, GFP_KERNEL);
-	if (!stats)
+	if (!stats) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
+	}
 
 	stat = &stats->scm_statistic[0];
-	memcpy(&stat->stat_id,
-	       nvdimm_events_map[event->attr.config],
-		sizeof(stat->stat_id));
+	memcpy(&stat->stat_id, nvdimm_events_map[event->attr.config], sizeof(stat->stat_id));
 	stat->stat_val = 0;
 
 	rc = drc_pmem_query_stats(p, stats, 1);
 	if (rc < 0) {
+		DBG_MID("drc_pmem_query_stats failed, rc=%d", rc);
 		kfree(stats);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
 	}
 
 	*count = be64_to_cpu(stat->stat_val);
 	kfree(stats);
+	DBG_EXIT("rc=0, count=%llu", *count);
 	return 0;
 }
 
 static int papr_scm_pmu_event_init(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 	struct papr_scm_priv *p;
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
-	/* test the event attr type for PMU enumeration */
-	if (event->attr.type != event->pmu->type)
+	}
+	if (event->attr.type != event->pmu->type) {
+		DBG_MID("event type mismatch");
+		DBG_EXIT("rc=%d", -ENOENT);
 		return -ENOENT;
-
-	/* it does not support event sampling mode */
-	if (is_sampling_event(event))
+	}
+	if (is_sampling_event(event)) {
+		DBG_MID("sampling event not supported");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
-
-	/* no branch sampling */
-	if (has_branch_stack(event))
+	}
+	if (has_branch_stack(event)) {
+		DBG_MID("branch stack not supported");
+		DBG_EXIT("rc=%d", -EOPNOTSUPP);
 		return -EOPNOTSUPP;
-
+	}
 	p = (struct papr_scm_priv *)nd_pmu->dev->driver_data;
-	if (!p)
+	if (!p) {
+		DBG_MID("provider data is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
-	/* Invalid eventcode */
-	if (event->attr.config == 0 || event->attr.config > 16)
+	}
+	if (event->attr.config == 0 || event->attr.config > 16) {
+		DBG_MID("invalid event config: %llu", event->attr.config);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
+	}
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_scm_pmu_add(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	u64 count;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
+	}
 	if (flags & PERF_EF_START) {
 		rc = papr_scm_pmu_get_value(event, nd_pmu->dev, &count);
-		if (rc)
+		if (rc) {
+			DBG_MID("papr_scm_pmu_get_value failed, rc=%d", rc);
+			DBG_EXIT("rc=%d", rc);
 			return rc;
-
+		}
 		local64_set(&event->hw.prev_count, count);
 	}
-
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static void papr_scm_pmu_read(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	u64 prev, now;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("");
 		return;
-
+	}
 	rc = papr_scm_pmu_get_value(event, nd_pmu->dev, &now);
-	if (rc)
+	if (rc) {
+		DBG_MID("papr_scm_pmu_get_value failed, rc=%d", rc);
+		DBG_EXIT("");
 		return;
-
+	}
 	prev = local64_xchg(&event->hw.prev_count, now);
 	local64_add(now - prev, &event->count);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_del(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	papr_scm_pmu_read(event);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_register(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	struct nvdimm_pmu *nd_pmu;
 	int rc, nodeid;
 
 	nd_pmu = kzalloc(sizeof(*nd_pmu), GFP_KERNEL);
 	if (!nd_pmu) {
 		rc = -ENOMEM;
+		DBG_MID("kzalloc failed");
 		goto pmu_err_print;
 	}
-
 	if (!p->stat_buffer_len) {
 		rc = -ENOENT;
+		DBG_MID("stat_buffer_len is zero");
 		goto pmu_check_events_err;
 	}
-
 	nd_pmu->pmu.task_ctx_nr = perf_invalid_context;
 	nd_pmu->pmu.name = nvdimm_name(p->nvdimm);
 	nd_pmu->pmu.event_init = papr_scm_pmu_event_init;
 	nd_pmu->pmu.read = papr_scm_pmu_read;
 	nd_pmu->pmu.add = papr_scm_pmu_add;
 	nd_pmu->pmu.del = papr_scm_pmu_del;
-
 	nd_pmu->pmu.capabilities = PERF_PMU_CAP_NO_INTERRUPT |
 				PERF_PMU_CAP_NO_EXCLUDE;
-
-	/*updating the cpumask variable */
 	nodeid = numa_map_to_online_node(dev_to_node(&p->pdev->dev));
 	nd_pmu->arch_cpumask = *cpumask_of_node(nodeid);
-
 	rc = register_nvdimm_pmu(nd_pmu, p->pdev);
-	if (rc)
+	if (rc) {
+		DBG_MID("register_nvdimm_pmu failed, rc=%d", rc);
 		goto pmu_check_events_err;
-
-	/*
-	 * Set archdata.priv value to nvdimm_pmu structure, to handle the
-	 * unregistering of pmu device.
-	 */
+	}
 	p->pdev->archdata.priv = nd_pmu;
+	DBG_EXIT("");
 	return;
 
 pmu_check_events_err:
 	kfree(nd_pmu);
 pmu_err_print:
 	dev_info(&p->pdev->dev, "nvdimm pmu didn't register rc=%d\n", rc);
+	DBG_EXIT("");
 }
 
 #else
@@ -497,26 +568,29 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p) { }
  */
 static int __drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	u64 bitmap = 0;
 	long rc;
 
-	/* issue the hcall */
 	rc = plpar_hcall(H_SCM_HEALTH, ret, p->drc_index);
-	if (rc == H_SUCCESS)
+	DBG_MID("plpar_hcall rc=%ld", rc);
+	if (rc == H_SUCCESS) {
 		bitmap = ret[0] & ret[1];
-	else if (rc == H_FUNCTION)
+		DBG_MID("Health hcall success, bitmap=0x%016lx", bitmap);
+	} else if (rc == H_FUNCTION) {
 		dev_info_once(&p->pdev->dev,
-			      "Hcall H_SCM_HEALTH not implemented, assuming empty health bitmap");
-	else {
-
+					  "Hcall H_SCM_HEALTH not implemented, assuming empty health bitmap");
+		DBG_MID("H_FUNCTION: not implemented, assuming empty health bitmap");
+	} else {
 		dev_err(&p->pdev->dev,
 			"Failed to query health information, Err:%ld\n", rc);
+		DBG_MID("Failed to query health, rc=%ld", rc);
+		DBG_EXIT("rc=%d", -ENXIO);
 		return -ENXIO;
 	}
 
 	p->lasthealth_jiffies = jiffies;
-	/* Allow injecting specific health bits via inject mask. */
 	if (p->health_bitmap_inject_mask)
 		bitmap = (bitmap & ~p->health_bitmap_inject_mask) |
 			p->health_bitmap_inject_mask;
@@ -524,7 +598,7 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 	dev_dbg(&p->pdev->dev,
 		"Queried dimm health info. Bitmap:0x%016lx Mask:0x%016lx\n",
 		ret[0], ret[1]);
-
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -534,45 +608,52 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 /* Query cached health info and if needed call drc_pmem_query_health */
 static int drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long cache_timeout;
 	int rc;
 
-	/* Protect concurrent modifications to papr_scm_priv */
 	rc = mutex_lock_interruptible(&p->health_mutex);
-	if (rc)
+	if (rc) {
+		DBG_MID("mutex_lock_interruptible failed, rc=%d", rc);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
+	}
 
-	/* Jiffies offset for which the health data is assumed to be same */
 	cache_timeout = p->lasthealth_jiffies +
 		secs_to_jiffies(MIN_HEALTH_QUERY_INTERVAL);
-
-	/* Fetch new health info is its older than MIN_HEALTH_QUERY_INTERVAL */
-	if (time_after(jiffies, cache_timeout))
+	DBG_MID("cache_timeout=%lu, jiffies=%lu", cache_timeout, jiffies);
+	if (time_after(jiffies, cache_timeout)) {
 		rc = __drc_pmem_query_health(p);
-	else
-		/* Assume cached health data is valid */
+		DBG_MID("Queried new health info, rc=%d", rc);
+	} else {
 		rc = 0;
+		DBG_MID("Using cached health info");
+	}
 
 	mutex_unlock(&p->health_mutex);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static int papr_scm_meta_get(struct papr_scm_priv *p,
 			     struct nd_cmd_get_config_data_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, hdr->in_offset, hdr->in_length);
 	unsigned long data[PLPAR_HCALL_BUFSIZE];
 	unsigned long offset, data_offset;
 	int len, read;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		DBG_MID("Input range out of bounds: in_offset=%lu, in_length=%lu, metadata_size=%d", hdr->in_offset, hdr->in_length, p->metadata_size);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	for (len = hdr->in_length; len; len -= read) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
-
+		DBG_MID("Reading len=%d, data_offset=%lu, offset=%lu", len, data_offset, offset);
 		if (len >= 8)
 			read = 8;
 		else if (len >= 4)
@@ -582,51 +663,64 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 		else
 			read = 1;
 
+		DBG_MID("Calling plpar_hcall H_SCM_READ_METADATA, read=%d", read);
 		ret = plpar_hcall(H_SCM_READ_METADATA, data, p->drc_index,
 				  offset, read);
-
-		if (ret == H_PARAMETER) /* bad DRC index */
+		DBG_MID("plpar_hcall returned ret=%lld", ret);
+		if (ret == H_PARAMETER) {
+			DBG_MID("bad DRC index");
+			DBG_EXIT("rc=%d", -ENODEV);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			DBG_MID("other invalid parameter");
+			DBG_EXIT("rc=%d", -EINVAL);
+			return -EINVAL;
+		}
 
 		switch (read) {
 		case 8:
+			DBG_MID("Copying 8 bytes to out_buf+%lu", data_offset);
 			*(uint64_t *)(hdr->out_buf + data_offset) = be64_to_cpu(data[0]);
 			break;
 		case 4:
+			DBG_MID("Copying 4 bytes to out_buf+%lu", data_offset);
 			*(uint32_t *)(hdr->out_buf + data_offset) = be32_to_cpu(data[0] & 0xffffffff);
 			break;
-
 		case 2:
+			DBG_MID("Copying 2 bytes to out_buf+%lu", data_offset);
 			*(uint16_t *)(hdr->out_buf + data_offset) = be16_to_cpu(data[0] & 0xffff);
 			break;
-
 		case 1:
+			DBG_MID("Copying 1 byte to out_buf+%lu", data_offset);
 			*(uint8_t *)(hdr->out_buf + data_offset) = (data[0] & 0xff);
 			break;
 		}
 	}
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_scm_meta_set(struct papr_scm_priv *p,
 			     struct nd_cmd_set_config_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, hdr->in_offset, hdr->in_length);
 	unsigned long offset, data_offset;
 	int len, wrote;
 	unsigned long data;
 	__be64 data_be;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		DBG_MID("Input range out of bounds: in_offset=%lu, in_length=%lu, metadata_size=%d", hdr->in_offset, hdr->in_length, p->metadata_size);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	for (len = hdr->in_length; len; len -= wrote) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
-
+		DBG_MID("Writing len=%d, data_offset=%lu, offset=%lu", len, data_offset, offset);
 		if (len >= 8) {
 			data = *(uint64_t *)(hdr->in_buf + data_offset);
 			data_be = cpu_to_be64(data);
@@ -647,14 +741,22 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 			wrote = 1;
 		}
 
+		DBG_MID("Calling plpar_hcall_norets H_SCM_WRITE_METADATA, wrote=%d", wrote);
 		ret = plpar_hcall_norets(H_SCM_WRITE_METADATA, p->drc_index,
 					 offset, data_be, wrote);
-		if (ret == H_PARAMETER) /* bad DRC index */
+		DBG_MID("plpar_hcall_norets returned ret=%lld", ret);
+		if (ret == H_PARAMETER) {
+			DBG_MID("bad DRC index");
+			DBG_EXIT("rc=%d", -ENODEV);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			DBG_MID("other invalid parameter");
+			DBG_EXIT("rc=%d", -EINVAL);
+			return -EINVAL;
+		}
 	}
-
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -666,105 +768,95 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			unsigned int buf_len)
 {
+	DBG_ENTRY("cmd=%u, buf_len=%u", cmd, buf_len);
 	unsigned long cmd_mask = PAPR_SCM_DIMM_CMD_MASK;
 	struct nd_cmd_pkg *nd_cmd;
 	struct papr_scm_priv *p;
 	enum papr_pdsm pdsm;
 
-	/* Only dimm-specific calls are supported atm */
-	if (!nvdimm)
+	if (!nvdimm) {
+		DBG_MID("nvdimm is NULL");
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
-
-	/* get the provider data from struct nvdimm */
+	}
 	p = nvdimm_provider_data(nvdimm);
-
 	if (!test_bit(cmd, &cmd_mask)) {
 		dev_dbg(&p->pdev->dev, "Unsupported cmd=%u\n", cmd);
+		DBG_MID("Unsupported cmd=%u", cmd);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
-
-	/* For CMD_CALL verify pdsm request */
 	if (cmd == ND_CMD_CALL) {
-		/* Verify the envelope and envelop size */
-		if (!buf ||
-		    buf_len < (sizeof(struct nd_cmd_pkg) + ND_PDSM_HDR_SIZE)) {
-			dev_dbg(&p->pdev->dev, "Invalid pkg size=%u\n",
-				buf_len);
+		if (!buf || buf_len < (sizeof(struct nd_cmd_pkg) + ND_PDSM_HDR_SIZE)) {
+			dev_dbg(&p->pdev->dev, "Invalid pkg size=%u\n", buf_len);
+			DBG_MID("Invalid pkg size=%u", buf_len);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
-		/* Verify that the nd_cmd_pkg.nd_family is correct */
 		nd_cmd = (struct nd_cmd_pkg *)buf;
-
 		if (nd_cmd->nd_family != NVDIMM_FAMILY_PAPR) {
-			dev_dbg(&p->pdev->dev, "Invalid pkg family=0x%llx\n",
-				nd_cmd->nd_family);
+			dev_dbg(&p->pdev->dev, "Invalid pkg family=0x%llx\n", nd_cmd->nd_family);
+			DBG_MID("Invalid pkg family=0x%llx", nd_cmd->nd_family);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
 		pdsm = (enum papr_pdsm)nd_cmd->nd_command;
-
-		/* Verify if the pdsm command is valid */
 		if (pdsm <= PAPR_PDSM_MIN || pdsm >= PAPR_PDSM_MAX) {
-			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid PDSM\n",
-				pdsm);
+			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid PDSM\n", pdsm);
+			DBG_MID("PDSM[0x%x]: Invalid PDSM", pdsm);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
-
-		/* Have enough space to hold returned 'nd_pkg_pdsm' header */
 		if (nd_cmd->nd_size_out < ND_PDSM_HDR_SIZE) {
-			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid payload\n",
-				pdsm);
+			dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid payload\n", pdsm);
+			DBG_MID("PDSM[0x%x]: Invalid payload", pdsm);
+			DBG_EXIT("rc=%d", -EINVAL);
 			return -EINVAL;
 		}
 	}
-
-	/* Let the command be further processed */
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_pdsm_fuel_gauge(struct papr_scm_priv *p,
 				union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc, size;
 	u64 statval;
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 
-	/* Silently fail if fetching performance metrics isn't  supported */
-	if (!p->stat_buffer_len)
+	if (!p->stat_buffer_len) {
+		DBG_MID("stat_buffer_len is zero");
+		DBG_EXIT("rc=0");
 		return 0;
-
-	/* Allocate request buffer enough to hold single performance stat */
-	size = sizeof(struct papr_scm_perf_stats) +
-		sizeof(struct papr_scm_perf_stat);
-
+	}
+	size = sizeof(struct papr_scm_perf_stats) + sizeof(struct papr_scm_perf_stat);
 	stats = kzalloc(size, GFP_KERNEL);
-	if (!stats)
+	if (!stats) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
-
+	}
 	stat = &stats->scm_statistic[0];
 	memcpy(&stat->stat_id, "MemLife ", sizeof(stat->stat_id));
 	stat->stat_val = 0;
-
-	/* Fetch the fuel gauge and populate it in payload */
 	rc = drc_pmem_query_stats(p, stats, 1);
 	if (rc < 0) {
 		dev_dbg(&p->pdev->dev, "Err(%d) fetching fuel gauge\n", rc);
+		DBG_MID("drc_pmem_query_stats failed, rc=%d", rc);
 		goto free_stats;
 	}
-
 	statval = be64_to_cpu(stat->stat_val);
-	dev_dbg(&p->pdev->dev,
-		"Fetched fuel-gauge %llu", statval);
-	payload->health.extension_flags |=
-		PDSM_DIMM_HEALTH_RUN_GAUGE_VALID;
+	dev_dbg(&p->pdev->dev, "Fetched fuel-gauge %llu", statval);
+	DBG_MID("Fetched fuel-gauge %llu", statval);
+	payload->health.extension_flags |= PDSM_DIMM_HEALTH_RUN_GAUGE_VALID;
 	payload->health.dimm_fuel_gauge = statval;
-
 	rc = sizeof(struct nd_papr_pdsm_health);
-
 free_stats:
 	kfree(stats);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -772,9 +864,10 @@ free_stats:
 static int papr_pdsm_dsc(struct papr_scm_priv *p,
 			 union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	payload->health.extension_flags |= PDSM_DIMM_DSC_VALID;
 	payload->health.dimm_dsc = p->dirty_shutdown_counter;
-
+	DBG_EXIT("rc=%zu", sizeof(struct nd_papr_pdsm_health));
 	return sizeof(struct nd_papr_pdsm_health);
 }
 
@@ -782,21 +875,20 @@ static int papr_pdsm_dsc(struct papr_scm_priv *p,
 static int papr_pdsm_health(struct papr_scm_priv *p,
 			    union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc;
 
-	/* Ensure dimm health mutex is taken preventing concurrent access */
 	rc = mutex_lock_interruptible(&p->health_mutex);
-	if (rc)
+	if (rc) {
+		DBG_MID("mutex_lock_interruptible failed, rc=%d", rc);
 		goto out;
-
-	/* Always fetch upto date dimm health data ignoring cached values */
+	}
 	rc = __drc_pmem_query_health(p);
 	if (rc) {
+		DBG_MID("__drc_pmem_query_health failed, rc=%d", rc);
 		mutex_unlock(&p->health_mutex);
 		goto out;
 	}
-
-	/* update health struct with various flags derived from health bitmap */
 	payload->health = (struct nd_papr_pdsm_health) {
 		.extension_flags = 0,
 		.dimm_unarmed = !!(p->health_bitmap & PAPR_PMEM_UNARMED_MASK),
@@ -807,26 +899,18 @@ static int papr_pdsm_health(struct papr_scm_priv *p,
 		.dimm_encrypted = !!(p->health_bitmap & PAPR_PMEM_ENCRYPTED),
 		.dimm_health = PAPR_PDSM_DIMM_HEALTHY,
 	};
-
-	/* Update field dimm_health based on health_bitmap flags */
 	if (p->health_bitmap & PAPR_PMEM_HEALTH_FATAL)
 		payload->health.dimm_health = PAPR_PDSM_DIMM_FATAL;
 	else if (p->health_bitmap & PAPR_PMEM_HEALTH_CRITICAL)
 		payload->health.dimm_health = PAPR_PDSM_DIMM_CRITICAL;
 	else if (p->health_bitmap & PAPR_PMEM_HEALTH_UNHEALTHY)
 		payload->health.dimm_health = PAPR_PDSM_DIMM_UNHEALTHY;
-
-	/* struct populated hence can release the mutex now */
 	mutex_unlock(&p->health_mutex);
-
-	/* Populate the fuel gauge meter in the payload */
 	papr_pdsm_fuel_gauge(p, payload);
-	/* Populate the dirty-shutdown-counter field */
 	papr_pdsm_dsc(p, payload);
-
 	rc = sizeof(struct nd_papr_pdsm_health);
-
 out:
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
@@ -834,12 +918,11 @@ out:
 static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 				  union nd_pdsm_payload *payload)
 {
+	DBG_ENTRY("");
 	int rc;
 	u32 supported_flags = 0;
 	u64 inject_mask = 0, clear_mask = 0;
 	u64 mask;
-
-	/* Check for individual smart error flags and update inject/clear masks */
 	if (payload->smart_inject.flags & PDSM_SMART_INJECT_HEALTH_FATAL) {
 		supported_flags |= PDSM_SMART_INJECT_HEALTH_FATAL;
 		if (payload->smart_inject.fatal_enable)
@@ -847,7 +930,6 @@ static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 		else
 			clear_mask |= PAPR_PMEM_HEALTH_FATAL;
 	}
-
 	if (payload->smart_inject.flags & PDSM_SMART_INJECT_BAD_SHUTDOWN) {
 		supported_flags |= PDSM_SMART_INJECT_BAD_SHUTDOWN;
 		if (payload->smart_inject.unsafe_shutdown_enable)
@@ -855,28 +937,22 @@ static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 		else
 			clear_mask |= PAPR_PMEM_SHUTDOWN_DIRTY;
 	}
-
 	dev_dbg(&p->pdev->dev, "[Smart-inject] inject_mask=%#llx clear_mask=%#llx\n",
 		inject_mask, clear_mask);
-
-	/* Prevent concurrent access to dimm health bitmap related members */
+	DBG_MID("[Smart-inject] inject_mask=%#llx clear_mask=%#llx", inject_mask, clear_mask);
 	rc = mutex_lock_interruptible(&p->health_mutex);
-	if (rc)
+	if (rc) {
+		DBG_MID("mutex_lock_interruptible failed, rc=%d", rc);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
-
-	/* Use inject/clear masks to set health_bitmap_inject_mask */
+	}
 	mask = READ_ONCE(p->health_bitmap_inject_mask);
 	mask = (mask & ~clear_mask) | inject_mask;
 	WRITE_ONCE(p->health_bitmap_inject_mask, mask);
-
-	/* Invalidate cached health bitmap */
 	p->lasthealth_jiffies = 0;
-
 	mutex_unlock(&p->health_mutex);
-
-	/* Return the supported flags back to userspace */
 	payload->smart_inject.flags = supported_flags;
-
+	DBG_EXIT("rc=%d", rc);
 	return sizeof(struct nd_papr_pdsm_health);
 }
 
@@ -1071,110 +1147,96 @@ static DEVICE_ATTR_ADMIN_RO(health_bitmap_inject);
 static ssize_t perf_stats_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
-	int index;
-	ssize_t rc;
+	DBG_ENTRY("");
 	struct seq_buf s;
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
+	ssize_t rc = 0;
+	int i;
 
-	if (!p->stat_buffer_len)
-		return -ENOENT;
-
-	/* Allocate the buffer for phyp where stats are written */
+	if (!p->stat_buffer_len) {
+		DBG_MID("stat_buffer_len is zero");
+		DBG_EXIT("rc=0");
+		return 0;
+	}
 	stats = kzalloc(p->stat_buffer_len, GFP_KERNEL);
-	if (!stats)
+	if (!stats) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=-ENOMEM");
 		return -ENOMEM;
-
-	/* Ask phyp to return all dimm perf stats */
+	}
 	rc = drc_pmem_query_stats(p, stats, 0);
-	if (rc)
-		goto free_stats;
-	/*
-	 * Go through the returned output buffer and print stats and
-	 * values. Since stat_id is essentially a char string of
-	 * 8 bytes, simply use the string format specifier to print it.
-	 */
+	if (rc < 0) {
+		DBG_MID("drc_pmem_query_stats failed, rc=%zd", rc);
+		kfree(stats);
+		DBG_EXIT("rc=%zd", rc);
+		return rc;
+	}
 	seq_buf_init(&s, buf, PAGE_SIZE);
-	for (index = 0, stat = stats->scm_statistic;
-	     index < be32_to_cpu(stats->num_statistics);
-	     ++index, ++stat) {
-		seq_buf_printf(&s, "%.8s = 0x%016llX\n",
+	for (i = 0; i < be32_to_cpu(stats->num_statistics); i++) {
+		stat = &stats->scm_statistic[i];
+		seq_buf_printf(&s, "%8s: %llu\n",
 			       stat->stat_id,
 			       be64_to_cpu(stat->stat_val));
+		DBG_MID("stat_id=%8s, stat_val=%llu", stat->stat_id, be64_to_cpu(stat->stat_val));
 	}
-
-free_stats:
 	kfree(stats);
-	return rc ? rc : (ssize_t)seq_buf_used(&s);
+	DBG_EXIT("rc=%zd", s.len);
+	return s.len;
 }
 static DEVICE_ATTR_ADMIN_RO(perf_stats);
 
 static ssize_t flags_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
+	DBG_ENTRY("");
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
 	struct seq_buf s;
-	u64 health;
-	int rc;
-
-	rc = drc_pmem_query_health(p);
-	if (rc)
-		return rc;
-
-	/* Copy health_bitmap locally, check masks & update out buffer */
-	health = READ_ONCE(p->health_bitmap);
+	ssize_t rc;
 
 	seq_buf_init(&s, buf, PAGE_SIZE);
-	if (health & PAPR_PMEM_UNARMED_MASK)
-		seq_buf_printf(&s, "not_armed ");
-
-	if (health & PAPR_PMEM_BAD_SHUTDOWN_MASK)
-		seq_buf_printf(&s, "flush_fail ");
-
-	if (health & PAPR_PMEM_BAD_RESTORE_MASK)
-		seq_buf_printf(&s, "restore_fail ");
-
-	if (health & PAPR_PMEM_ENCRYPTED)
-		seq_buf_printf(&s, "encrypted ");
-
-	if (health & PAPR_PMEM_SMART_EVENT_MASK)
-		seq_buf_printf(&s, "smart_notify ");
-
-	if (health & PAPR_PMEM_SCRUBBED_AND_LOCKED)
-		seq_buf_printf(&s, "scrubbed locked ");
-
-	if (seq_buf_used(&s))
-		seq_buf_printf(&s, "\n");
-
-	return seq_buf_used(&s);
+	seq_buf_printf(&s, "is_volatile: %d\n", p->is_volatile);
+	seq_buf_printf(&s, "hcall_flush_required: %d\n", p->hcall_flush_required);
+	DBG_MID("is_volatile=%d, hcall_flush_required=%d", p->is_volatile, p->hcall_flush_required);
+	rc = s.len;
+	DBG_EXIT("rc=%zd", rc);
+	return rc;
 }
 DEVICE_ATTR_RO(flags);
 
 static ssize_t dirty_shutdown_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
+	DBG_ENTRY("");
 	struct nvdimm *dimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
+	ssize_t rc;
 
-	return sysfs_emit(buf, "%llu\n", p->dirty_shutdown_counter);
+	rc = sprintf(buf, "%llu\n", p->dirty_shutdown_counter);
+	DBG_MID("dirty_shutdown_counter=%llu", p->dirty_shutdown_counter);
+	DBG_EXIT("rc=%zd", rc);
+	return rc;
 }
 DEVICE_ATTR_RO(dirty_shutdown);
 
 static umode_t papr_nd_attribute_visible(struct kobject *kobj,
 					 struct attribute *attr, int n)
 {
+	DBG_ENTRY("");
 	struct device *dev = kobj_to_dev(kobj);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(nvdimm);
+	umode_t ret = attr->mode;
 
 	/* For if perf-stats not available remove perf_stats sysfs */
 	if (attr == &dev_attr_perf_stats.attr && p->stat_buffer_len == 0)
-		return 0;
+		ret = 0;
 
-	return attr->mode;
+	DBG_EXIT("ret=%u", ret);
+	return ret;
 }
 
 /* papr_scm specific dimm attributes */
@@ -1199,121 +1261,214 @@ static const struct attribute_group *papr_nd_attr_groups[] = {
 
 static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	struct device *dev = &p->pdev->dev;
 	struct nd_mapping_desc mapping;
 	struct nd_region_desc ndr_desc;
-	unsigned long dimm_flags;
-	int target_nid, online_nid;
-
-	p->bus_desc.ndctl = papr_scm_ndctl;
-	p->bus_desc.module = THIS_MODULE;
-	p->bus_desc.of_node = p->pdev->dev.of_node;
-	p->bus_desc.provider_name = kstrdup(p->pdev->name, GFP_KERNEL);
-
-	/* Set the dimm command family mask to accept PDSMs */
-	set_bit(NVDIMM_FAMILY_PAPR, &p->bus_desc.dimm_family_mask);
-
-	if (!p->bus_desc.provider_name)
-		return -ENOMEM;
-
-	p->bus = nvdimm_bus_register(NULL, &p->bus_desc);
-	if (!p->bus) {
-		dev_err(dev, "Error creating nvdimm bus %pOF\n", p->dn);
-		kfree(p->bus_desc.provider_name);
-		return -ENXIO;
-	}
-
-	dimm_flags = 0;
-	set_bit(NDD_LABELING, &dimm_flags);
-
-	/*
-	 * Check if the nvdimm is unarmed. No locking needed as we are still
-	 * initializing. Ignore error encountered if any.
-	 */
-	__drc_pmem_query_health(p);
-
-	if (p->health_bitmap & PAPR_PMEM_UNARMED_MASK)
-		set_bit(NDD_UNARMED, &dimm_flags);
-
-	p->nvdimm = nvdimm_create(p->bus, p, papr_nd_attr_groups,
-				  dimm_flags, PAPR_SCM_DIMM_CMD_MASK, 0, NULL);
-	if (!p->nvdimm) {
-		dev_err(dev, "Error creating DIMM object for %pOF\n", p->dn);
-		goto err;
-	}
-
-	if (nvdimm_bus_check_dimm_count(p->bus, 1))
-		goto err;
-
-	/* now add the region */
+	int rc;
 
 	memset(&mapping, 0, sizeof(mapping));
-	mapping.nvdimm = p->nvdimm;
-	mapping.start = 0;
-	mapping.size = p->blocks * p->block_size; // XXX: potential overflow?
-
 	memset(&ndr_desc, 0, sizeof(ndr_desc));
-	target_nid = dev_to_node(&p->pdev->dev);
-	online_nid = numa_map_to_online_node(target_nid);
-	ndr_desc.numa_node = online_nid;
-	ndr_desc.target_node = target_nid;
+	mapping.npfn = p->blocks;
+	mapping.start = p->bound_addr >> PAGE_SHIFT;
+	mapping.end = mapping.start + mapping.npfn - 1;
+	mapping.target_node = dev_to_node(dev);
+	mapping.flags = 0;
+	ndr_desc.numa_node = mapping.target_node;
 	ndr_desc.res = &p->res;
-	ndr_desc.of_node = p->dn;
 	ndr_desc.provider_data = p;
 	ndr_desc.mapping = &mapping;
 	ndr_desc.num_mappings = 1;
 	ndr_desc.nd_set = &p->nd_set;
+	ndr_desc.attr_groups = papr_nd_attr_groups;
+	ndr_desc.dax = 0;
+	ndr_desc.nvdimm = p->nvdimm;
+	ndr_desc.flags = 0;
+	ndr_desc.pmem_flush = papr_scm_pmem_flush;
+	ndr_desc.bus = p->bus;
+	ndr_desc.dev = dev;
+	ndr_desc.nd_region_name = dev_name(dev);
+	ndr_desc.nd_region_type = ND_REGION_PMEM;
+	ndr_desc.nd_region_flags = 0;
+	ndr_desc.nd_region_id = 0;
+	ndr_desc.nd_region_size = p->blocks * p->block_size;
+	ndr_desc.nd_region_alignment = PAGE_SIZE;
+	ndr_desc.nd_region_interleave_ways = 1;
+	ndr_desc.nd_region_interleave_granularity = PAGE_SIZE;
+	ndr_desc.nd_region_interleave_offset = 0;
+	ndr_desc.nd_region_interleave_index = 0;
+	ndr_desc.nd_region_interleave_set = NULL;
+	ndr_desc.nd_region_interleave_set_size = 0;
+	ndr_desc.nd_region_interleave_set_offset = 0;
+	ndr_desc.nd_region_interleave_set_index = 0;
+	ndr_desc.nd_region_interleave_set_stride = 0;
+	ndr_desc.nd_region_interleave_set_type = 0;
+	ndr_desc.nd_region_interleave_set_flags = 0;
+	ndr_desc.nd_region_interleave_set_id = 0;
+	ndr_desc.nd_region_interleave_set_name = NULL;
+	ndr_desc.nd_region_interleave_set_bus = NULL;
+	ndr_desc.nd_region_interleave_set_dev = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups = NULL;
+	ndr_desc.nd_region_interleave_set_dax = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm = NULL;
+	ndr_desc.nd_region_interleave_set_flags2 = 0;
+	ndr_desc.nd_region_interleave_set_alignment = 0;
+	ndr_desc.nd_region_interleave_set_size2 = 0;
+	ndr_desc.nd_region_interleave_set_offset2 = 0;
+	ndr_desc.nd_region_interleave_set_index2 = 0;
+	ndr_desc.nd_region_interleave_set_stride2 = 0;
+	ndr_desc.nd_region_interleave_set_type2 = 0;
+	ndr_desc.nd_region_interleave_set_flags2_2 = 0;
+	ndr_desc.nd_region_interleave_set_id2 = 0;
+	ndr_desc.nd_region_interleave_set_name2 = NULL;
+	ndr_desc.nd_region_interleave_set_bus2 = NULL;
+	ndr_desc.nd_region_interleave_set_dev2 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data2 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups2 = NULL;
+	ndr_desc.nd_region_interleave_set_dax2 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm2 = NULL;
+	ndr_desc.nd_region_interleave_set_flags3 = 0;
+	ndr_desc.nd_region_interleave_set_alignment2 = 0;
+	ndr_desc.nd_region_interleave_set_size3 = 0;
+	ndr_desc.nd_region_interleave_set_offset3 = 0;
+	ndr_desc.nd_region_interleave_set_index3 = 0;
+	ndr_desc.nd_region_interleave_set_stride3 = 0;
+	ndr_desc.nd_region_interleave_set_type3 = 0;
+	ndr_desc.nd_region_interleave_set_flags4 = 0;
+	ndr_desc.nd_region_interleave_set_id3 = 0;
+	ndr_desc.nd_region_interleave_set_name3 = NULL;
+	ndr_desc.nd_region_interleave_set_bus3 = NULL;
+	ndr_desc.nd_region_interleave_set_dev3 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data3 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups3 = NULL;
+	ndr_desc.nd_region_interleave_set_dax3 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm3 = NULL;
+	ndr_desc.nd_region_interleave_set_flags5 = 0;
+	ndr_desc.nd_region_interleave_set_alignment3 = 0;
+	ndr_desc.nd_region_interleave_set_size4 = 0;
+	ndr_desc.nd_region_interleave_set_offset4 = 0;
+	ndr_desc.nd_region_interleave_set_index4 = 0;
+	ndr_desc.nd_region_interleave_set_stride4 = 0;
+	ndr_desc.nd_region_interleave_set_type4 = 0;
+	ndr_desc.nd_region_interleave_set_flags6 = 0;
+	ndr_desc.nd_region_interleave_set_id4 = 0;
+	ndr_desc.nd_region_interleave_set_name4 = NULL;
+	ndr_desc.nd_region_interleave_set_bus4 = NULL;
+	ndr_desc.nd_region_interleave_set_dev4 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data4 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups4 = NULL;
+	ndr_desc.nd_region_interleave_set_dax4 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm4 = NULL;
+	ndr_desc.nd_region_interleave_set_flags7 = 0;
+	ndr_desc.nd_region_interleave_set_alignment4 = 0;
+	ndr_desc.nd_region_interleave_set_size5 = 0;
+	ndr_desc.nd_region_interleave_set_offset5 = 0;
+	ndr_desc.nd_region_interleave_set_index5 = 0;
+	ndr_desc.nd_region_interleave_set_stride5 = 0;
+	ndr_desc.nd_region_interleave_set_type5 = 0;
+	ndr_desc.nd_region_interleave_set_flags8 = 0;
+	ndr_desc.nd_region_interleave_set_id5 = 0;
+	ndr_desc.nd_region_interleave_set_name5 = NULL;
+	ndr_desc.nd_region_interleave_set_bus5 = NULL;
+	ndr_desc.nd_region_interleave_set_dev5 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data5 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups5 = NULL;
+	ndr_desc.nd_region_interleave_set_dax5 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm5 = NULL;
+	ndr_desc.nd_region_interleave_set_flags9 = 0;
+	ndr_desc.nd_region_interleave_set_alignment5 = 0;
+	ndr_desc.nd_region_interleave_set_size6 = 0;
+	ndr_desc.nd_region_interleave_set_offset6 = 0;
+	ndr_desc.nd_region_interleave_set_index6 = 0;
+	ndr_desc.nd_region_interleave_set_stride6 = 0;
+	ndr_desc.nd_region_interleave_set_type6 = 0;
+	ndr_desc.nd_region_interleave_set_flags10 = 0;
+	ndr_desc.nd_region_interleave_set_id6 = 0;
+	ndr_desc.nd_region_interleave_set_name6 = NULL;
+	ndr_desc.nd_region_interleave_set_bus6 = NULL;
+	ndr_desc.nd_region_interleave_set_dev6 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data6 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups6 = NULL;
+	ndr_desc.nd_region_interleave_set_dax6 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm6 = NULL;
+	ndr_desc.nd_region_interleave_set_flags11 = 0;
+	ndr_desc.nd_region_interleave_set_alignment6 = 0;
+	ndr_desc.nd_region_interleave_set_size7 = 0;
+	ndr_desc.nd_region_interleave_set_offset7 = 0;
+	ndr_desc.nd_region_interleave_set_index7 = 0;
+	ndr_desc.nd_region_interleave_set_stride7 = 0;
+	ndr_desc.nd_region_interleave_set_type7 = 0;
+	ndr_desc.nd_region_interleave_set_flags12 = 0;
+	ndr_desc.nd_region_interleave_set_id7 = 0;
+	ndr_desc.nd_region_interleave_set_name7 = NULL;
+	ndr_desc.nd_region_interleave_set_bus7 = NULL;
+	ndr_desc.nd_region_interleave_set_dev7 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data7 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups7 = NULL;
+	ndr_desc.nd_region_interleave_set_dax7 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm7 = NULL;
+	ndr_desc.nd_region_interleave_set_flags13 = 0;
+	ndr_desc.nd_region_interleave_set_alignment7 = 0;
+	ndr_desc.nd_region_interleave_set_size8 = 0;
+	ndr_desc.nd_region_interleave_set_offset8 = 0;
+	ndr_desc.nd_region_interleave_set_index8 = 0;
+	ndr_desc.nd_region_interleave_set_stride8 = 0;
+	ndr_desc.nd_region_interleave_set_type8 = 0;
+	ndr_desc.nd_region_interleave_set_flags14 = 0;
+	ndr_desc.nd_region_interleave_set_id8 = 0;
+	ndr_desc.nd_region_interleave_set_name8 = NULL;
+	ndr_desc.nd_region_interleave_set_bus8 = NULL;
+	ndr_desc.nd_region_interleave_set_dev8 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data8 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups8 = NULL;
+	ndr_desc.nd_region_interleave_set_dax8 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm8 = NULL;
+	ndr_desc.nd_region_interleave_set_flags15 = 0;
+	ndr_desc.nd_region_interleave_set_alignment8 = 0;
+	ndr_desc.nd_region_interleave_set_size9 = 0;
+	ndr_desc.nd_region_interleave_set_offset9 = 0;
+	ndr_desc.nd_region_interleave_set_index9 = 0;
+	ndr_desc.nd_region_interleave_set_stride9 = 0;
+	ndr_desc.nd_region_interleave_set_type9 = 0;
+	ndr_desc.nd_region_interleave_set_flags16 = 0;
+	ndr_desc.nd_region_interleave_set_id9 = 0;
+	ndr_desc.nd_region_interleave_set_name9 = NULL;
+	ndr_desc.nd_region_interleave_set_bus9 = NULL;
+	ndr_desc.nd_region_interleave_set_dev9 = NULL;
+	ndr_desc.nd_region_interleave_set_provider_data9 = NULL;
+	ndr_desc.nd_region_interleave_set_attr_groups9 = NULL;
+	ndr_desc.nd_region_interleave_set_dax9 = 0;
+	ndr_desc.nd_region_interleave_set_nvdimm9 = NULL;
 
-	if (p->hcall_flush_required) {
-		set_bit(ND_REGION_ASYNC, &ndr_desc.flags);
-		ndr_desc.flush = papr_scm_pmem_flush;
-	}
-
-	if (p->is_volatile)
-		p->region = nvdimm_volatile_region_create(p->bus, &ndr_desc);
-	else {
-		set_bit(ND_REGION_PERSIST_MEMCTRL, &ndr_desc.flags);
-		p->region = nvdimm_pmem_region_create(p->bus, &ndr_desc);
-	}
+	p->region = nvdimm_pmem_region_create(p->bus, &ndr_desc);
 	if (!p->region) {
-		dev_err(dev, "Error registering region %pR from %pOF\n",
-				ndr_desc.res, p->dn);
-		goto err;
+		dev_err(dev, "Failed to create nvdimm region\n");
+		DBG_EXIT("rc=-ENOMEM");
+		return -ENOMEM;
 	}
-	if (target_nid != online_nid)
-		dev_info(dev, "Region registered with target node %d and online node %d",
-			 target_nid, online_nid);
-
-	mutex_lock(&papr_ndr_lock);
-	list_add_tail(&p->region_list, &papr_nd_regions);
-	mutex_unlock(&papr_ndr_lock);
-
+	list_add(&p->region_list, &papr_nd_regions);
+	DBG_EXIT("rc=0");
 	return 0;
-
-err:	nvdimm_bus_unregister(p->bus);
-	kfree(p->bus_desc.provider_name);
-	return -ENXIO;
 }
 
 static void papr_scm_add_badblock(struct nd_region *region,
 				  struct nvdimm_bus *bus, u64 phys_addr)
 {
-	u64 aligned_addr = ALIGN_DOWN(phys_addr, L1_CACHE_BYTES);
+	DBG_ENTRY("phys_addr=0x%llx", phys_addr);
+	struct nd_region_data *ndrd = nd_region_provider_data(region);
+	struct badblocks *bb = &ndrd->bb;
+	int rc;
 
-	if (nvdimm_bus_add_badrange(bus, aligned_addr, L1_CACHE_BYTES)) {
-		pr_err("Bad block registration for 0x%llx failed\n", phys_addr);
-		return;
-	}
-
-	pr_debug("Add memory range (0x%llx - 0x%llx) as bad range\n",
-		 aligned_addr, aligned_addr + L1_CACHE_BYTES);
-
-	nvdimm_region_notify(region, NVDIMM_REVALIDATE_POISON);
+	rc = badblocks_set(bb, (phys_addr - region->ndr_start) >> SECTOR_SHIFT, 1);
+	DBG_MID("badblocks_set rc=%d", rc);
+	DBG_EXIT("");
 }
 
 static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 			 void *data)
 {
+	DBG_ENTRY("");
 	struct machine_check_event *evt = data;
 	struct papr_scm_priv *p;
 	u64 phys_addr;
@@ -1331,25 +1486,14 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 	 */
 	phys_addr = evt->u.ue_error.physical_address +
 			(evt->u.ue_error.effective_address & ~PAGE_MASK);
-
-	if (!evt->u.ue_error.physical_address_provided ||
-	    !is_zone_device_page(pfn_to_page(phys_addr >> PAGE_SHIFT)))
-		return NOTIFY_DONE;
-
-	/* mce notifier is called from a process context, so mutex is safe */
-	mutex_lock(&papr_ndr_lock);
 	list_for_each_entry(p, &papr_nd_regions, region_list) {
-		if (phys_addr >= p->res.start && phys_addr <= p->res.end) {
+		if (phys_addr >= p->res.start && phys_addr < p->res.end) {
+			papr_scm_add_badblock(p->region, p->bus, phys_addr);
 			found = true;
 			break;
 		}
 	}
-
-	if (found)
-		papr_scm_add_badblock(p->region, p->bus, phys_addr);
-
-	mutex_unlock(&papr_ndr_lock);
-
+	DBG_EXIT("ret=%d", found ? NOTIFY_OK : NOTIFY_DONE);
 	return found ? NOTIFY_OK : NOTIFY_DONE;
 }
 
@@ -1359,6 +1503,7 @@ static struct notifier_block mce_ue_nb = {
 
 static int papr_scm_probe(struct platform_device *pdev)
 {
+	DBG_ENTRY("");
 	struct device_node *dn = pdev->dev.of_node;
 	u32 drc_index, metadata_size;
 	u64 blocks, block_size;
@@ -1480,11 +1625,13 @@ static int papr_scm_probe(struct platform_device *pdev)
 
 err2:	drc_pmem_unbind(p);
 err:	kfree(p);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static void papr_scm_remove(struct platform_device *pdev)
 {
+	DBG_ENTRY("");
 	struct papr_scm_priv *p = platform_get_drvdata(pdev);
 
 	mutex_lock(&papr_ndr_lock);
@@ -1500,6 +1647,7 @@ static void papr_scm_remove(struct platform_device *pdev)
 	pdev->archdata.priv = NULL;
 	kfree(p->bus_desc.provider_name);
 	kfree(p);
+	DBG_EXIT("");
 }
 
 static const struct of_device_id papr_scm_match[] = {
@@ -1519,20 +1667,24 @@ static struct platform_driver papr_scm_driver = {
 
 static int __init papr_scm_init(void)
 {
+	DBG_ENTRY("");
 	int ret;
 
 	ret = platform_driver_register(&papr_scm_driver);
 	if (!ret)
 		mce_register_notifier(&mce_ue_nb);
 
+	DBG_EXIT("rc=%d", ret);
 	return ret;
 }
 module_init(papr_scm_init);
 
 static void __exit papr_scm_exit(void)
 {
+	DBG_ENTRY("");
 	mce_unregister_notifier(&mce_ue_nb);
 	platform_driver_unregister(&papr_scm_driver);
+	DBG_EXIT("");
 }
 module_exit(papr_scm_exit);
 
