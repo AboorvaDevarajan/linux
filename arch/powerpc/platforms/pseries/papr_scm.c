@@ -408,7 +408,7 @@ static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, 
 
 	*count = be64_to_cpu(stat->stat_val);
 	kfree(stats);
-	DBG_EXIT("rc=0, count=%llu", (unsigned long long)*count);
+	DBG_EXIT("rc=0, count=0x%llx", (unsigned long long)*count);
 	return 0;
 }
 
