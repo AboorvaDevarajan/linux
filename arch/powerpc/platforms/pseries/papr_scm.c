@@ -480,71 +480,82 @@ static int papr_scm_pmu_add(struct perf_event *event, int flags)
 
 static void papr_scm_pmu_read(struct perf_event *event)
 {
+	DBG_ENTRY("");
 	u64 prev, now;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
 
-	if (!nd_pmu)
+	if (!nd_pmu) {
+		DBG_MID("nd_pmu is NULL");
+		DBG_EXIT("");
 		return;
-
+	}
 	rc = papr_scm_pmu_get_value(event, nd_pmu->dev, &now);
-	if (rc)
+	if (rc) {
+		DBG_MID("papr_scm_pmu_get_value failed, rc=%d", rc);
+		DBG_EXIT("");
 		return;
-
+	}
 	prev = local64_xchg(&event->hw.prev_count, now);
 	local64_add(now - prev, &event->count);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_del(struct perf_event *event, int flags)
 {
+	DBG_ENTRY("flags=0x%x", flags);
 	papr_scm_pmu_read(event);
+	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_register(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	struct nvdimm_pmu *nd_pmu;
 	int rc, nodeid;
 
 	nd_pmu = kzalloc(sizeof(*nd_pmu), GFP_KERNEL);
 	if (!nd_pmu) {
+		DBG_MID("kzalloc failed");
 		rc = -ENOMEM;
 		goto pmu_err_print;
 	}
-
 	if (!p->stat_buffer_len) {
+		DBG_MID("stat_buffer_len is zero");
 		rc = -ENOENT;
 		goto pmu_check_events_err;
 	}
-
-	nd_pmu->pmu.task_ctx_nr = perf_invalid_context;
-	nd_pmu->pmu.name = nvdimm_name(p->nvdimm);
-	nd_pmu->pmu.event_init = papr_scm_pmu_event_init;
-	nd_pmu->pmu.read = papr_scm_pmu_read;
-	nd_pmu->pmu.add = papr_scm_pmu_add;
-	nd_pmu->pmu.del = papr_scm_pmu_del;
-
+	nd_pmu->dev = &p->pdev->dev;
+	nd_pmu->pmu = (struct pmu) {
+		.name = dev_name(&p->pdev->dev),
+		.module = THIS_MODULE,
+		.attr_groups = NULL,
+		.task_ctx_nr = perf_invalid_context,
+		.event_init = papr_scm_pmu_event_init,
+		.add = papr_scm_pmu_add,
+		.del = papr_scm_pmu_del,
+		.start = NULL,
+		.stop = NULL,
+		.read = papr_scm_pmu_read,
+	};
 	nd_pmu->pmu.capabilities = PERF_PMU_CAP_NO_INTERRUPT |
 				PERF_PMU_CAP_NO_EXCLUDE;
-
-	/*updating the cpumask variable */
 	nodeid = numa_map_to_online_node(dev_to_node(&p->pdev->dev));
 	nd_pmu->arch_cpumask = *cpumask_of_node(nodeid);
-
 	rc = register_nvdimm_pmu(nd_pmu, p->pdev);
-	if (rc)
+	if (rc) {
+		DBG_MID("register_nvdimm_pmu failed, rc=%d", rc);
 		goto pmu_check_events_err;
-
-	/*
-	 * Set archdata.priv value to nvdimm_pmu structure, to handle the
-	 * unregistering of pmu device.
-	 */
+	}
 	p->pdev->archdata.priv = nd_pmu;
+	DBG_EXIT("");
 	return;
 
 pmu_check_events_err:
 	kfree(nd_pmu);
 pmu_err_print:
 	dev_info(&p->pdev->dev, "nvdimm pmu didn't register rc=%d\n", rc);
+	DBG_EXIT("");
 }
 
 #else
