@@ -111,7 +111,7 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 	long rc;
 
 	dev_dbg(&p->pdev->dev, "flush drc 0x%x", p->drc_index);
-	DBG_MID("About to start flush loop for drc_index=0x%x", (unsigned long long)p->drc_index);
+	DBG_MID("About to start flush loop for drc_index=0x%x", (unsigned int)p->drc_index);
 	do {
 		rc = plpar_hcall(H_SCM_FLUSH, ret_buf, p->drc_index, token);
 		DBG_MID("plpar_hcall returned rc=%ld, token=%lx", rc, token);
@@ -130,11 +130,11 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 
 	if (rc) {
 		dev_err(&p->pdev->dev, "flush error: %ld", rc);
-		DBG_MID("Flush error: %ld", (unsigned long long)rc);
+		DBG_MID("Flush error: %ld", rc);
 		rc = -EIO;
 	} else {
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
-		DBG_MID("Flush complete for drc_index=0x%x", (unsigned long long)p->drc_index);
+		DBG_MID("Flush complete for drc_index=0x%x", (unsigned int)p->drc_index);
 	}
 
 	DBG_EXIT("rc=%ld", rc);
@@ -146,14 +146,14 @@ static DEFINE_MUTEX(papr_ndr_lock);
 
 static int drc_pmem_bind(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t saved = 0;
 	uint64_t token;
 	int64_t rc;
 
 	token = 0;
-	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", (unsigned long long)p->drc_index, (unsigned long long)p->blocks);
+	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", (unsigned int)p->drc_index, (unsigned long long)p->blocks);
 	do {
 		rc = plpar_hcall(H_SCM_BIND_MEM, ret, p->drc_index, 0,
 				p->blocks, BIND_ANY_ADDR, token);
