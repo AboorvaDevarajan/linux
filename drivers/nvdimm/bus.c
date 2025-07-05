@@ -217,6 +217,7 @@ static void nvdimm_account_cleared_poison(struct nvdimm_bus *nvdimm_bus,
 long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 		unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, phys=%pa, len=%u\n", __func__, dev, &phys, len);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc;
 	struct nd_cmd_clear_error clear_err;
@@ -268,6 +269,7 @@ long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 
 	nvdimm_account_cleared_poison(nvdimm_bus, phys, clear_err.cleared);
 
+	printk(KERN_INFO "%s: EXIT: cleared=%lld\n", __func__, (long long)clear_err.cleared);
 	return clear_err.cleared;
 }
 EXPORT_SYMBOL_GPL(nvdimm_clear_poison);
@@ -336,6 +338,7 @@ static struct lock_class_key nvdimm_bus_key;
 struct nvdimm_bus *nvdimm_bus_register(struct device *parent,
 		struct nvdimm_bus_descriptor *nd_desc)
 {
+	printk(KERN_INFO "%s: ENTRY: parent=%p, nd_desc=%p\n", __func__, parent, nd_desc);
 	struct nvdimm_bus *nvdimm_bus;
 	int rc;
 
@@ -368,9 +371,10 @@ struct nvdimm_bus *nvdimm_bus_register(struct device *parent,
 	rc = device_add(&nvdimm_bus->dev);
 	if (rc) {
 		dev_dbg(&nvdimm_bus->dev, "registration failed: %d\n", rc);
+		printk(KERN_INFO "%s: EXIT: device_add failed rc=%d\n", __func__, rc);
 		goto err;
 	}
-
+	printk(KERN_INFO "%s: EXIT: nvdimm_bus=%p\n", __func__, nvdimm_bus);
 	return nvdimm_bus;
  err:
 	put_device(&nvdimm_bus->dev);
@@ -380,9 +384,13 @@ EXPORT_SYMBOL_GPL(nvdimm_bus_register);
 
 void nvdimm_bus_unregister(struct nvdimm_bus *nvdimm_bus)
 {
-	if (!nvdimm_bus)
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p\n", __func__, nvdimm_bus);
+	if (!nvdimm_bus) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_bus is NULL\n", __func__);
 		return;
+	}
 	device_unregister(&nvdimm_bus->dev);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL_GPL(nvdimm_bus_unregister);
 
@@ -543,17 +551,22 @@ static void __nd_device_register(struct device *dev, bool sync)
 
 void nd_device_register(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	__nd_device_register(dev, false);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL(nd_device_register);
 
 void nd_device_register_sync(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	__nd_device_register(dev, true);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 void nd_device_unregister(struct device *dev, enum nd_async_mode mode)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, mode=%d\n", __func__, dev, mode);
 	bool killed;
 
 	switch (mode) {
@@ -590,6 +603,7 @@ void nd_device_unregister(struct device *dev, enum nd_async_mode mode)
 		device_unregister(dev);
 		break;
 	}
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL(nd_device_unregister);
 
@@ -625,6 +639,7 @@ EXPORT_SYMBOL(__nd_driver_register);
 
 void nvdimm_check_and_set_ro(struct gendisk *disk)
 {
+	printk(KERN_INFO "%s: ENTRY: disk=%p\n", __func__, disk);
 	struct device *dev = disk_to_dev(disk)->parent;
 	struct nd_region *nd_region = to_nd_region(dev->parent);
 	int disk_ro = get_disk_ro(disk);
@@ -637,6 +652,7 @@ void nvdimm_check_and_set_ro(struct gendisk *disk)
 		 dev_name(&nd_region->dev), nd_region->ro ? "only" : "write",
 		 disk->disk_name, nd_region->ro ? "only" : "write");
 	set_disk_ro(disk, nd_region->ro);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL(nvdimm_check_and_set_ro);
 
@@ -735,6 +751,7 @@ static struct lock_class_key nvdimm_ndctl_key;
 
 int nvdimm_bus_create_ndctl(struct nvdimm_bus *nvdimm_bus)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p\n", __func__, nvdimm_bus);
 	dev_t devt = MKDEV(nvdimm_bus_major, nvdimm_bus->id);
 	struct device *dev;
 	int rc;
@@ -757,8 +774,10 @@ int nvdimm_bus_create_ndctl(struct nvdimm_bus *nvdimm_bus)
 	if (rc) {
 		dev_dbg(&nvdimm_bus->dev, "failed to register ndctl%d: %d\n",
 				nvdimm_bus->id, rc);
+		printk(KERN_INFO "%s: EXIT: dev_set_name failed rc=%d\n", __func__, rc);
 		goto err;
 	}
+	printk(KERN_INFO "%s: EXIT: success\n", __func__);
 	return 0;
 
 err:
@@ -768,7 +787,9 @@ err:
 
 void nvdimm_bus_destroy_ndctl(struct nvdimm_bus *nvdimm_bus)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p\n", __func__, nvdimm_bus);
 	device_destroy(&nd_class, MKDEV(nvdimm_bus_major, nvdimm_bus->id));
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 static const struct nd_cmd_desc __nd_cmd_dimm_descs[] = {
@@ -1026,6 +1047,7 @@ static int nd_cmd_clear_to_send(struct nvdimm_bus *nvdimm_bus,
 static int __nd_ioctl(struct nvdimm_bus *nvdimm_bus, struct nvdimm *nvdimm,
 		int read_only, unsigned int ioctl_cmd, unsigned long arg)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, nvdimm=%p, read_only=%d, ioctl_cmd=0x%x, arg=%lx\n", __func__, nvdimm_bus, nvdimm, read_only, ioctl_cmd, arg);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	const struct nd_cmd_desc *desc = NULL;
 	unsigned int cmd = _IOC_NR(ioctl_cmd);
@@ -1204,6 +1226,7 @@ out:
 	kfree(in_env);
 	kfree(out_env);
 	vfree(buf);
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
@@ -1227,8 +1250,8 @@ static int match_dimm(struct device *dev, const void *data)
 
 static long nd_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 		enum nd_ioctl_mode mode)
-
 {
+	printk(KERN_INFO "%s: ENTRY: file=%p, cmd=0x%x, arg=%lx, mode=%d\n", __func__, file, cmd, arg, mode);
 	struct nvdimm_bus *nvdimm_bus, *found = NULL;
 	long id = (long) file->private_data;
 	struct nvdimm *nvdimm = NULL;
@@ -1268,6 +1291,7 @@ static long nd_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 	if (atomic_dec_and_test(&nvdimm_bus->ioctl_active))
 		wake_up(&nvdimm_bus->wait);
 
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
@@ -1307,6 +1331,7 @@ static const struct file_operations nvdimm_fops = {
 
 int __init nvdimm_bus_init(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	int rc;
 
 	rc = bus_register(&nvdimm_bus_type);
@@ -1331,6 +1356,7 @@ int __init nvdimm_bus_init(void)
 	if (rc)
 		goto err_nd_bus;
 
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return 0;
 
  err_nd_bus:
@@ -1342,15 +1368,18 @@ int __init nvdimm_bus_init(void)
  err_bus_chrdev:
 	bus_unregister(&nvdimm_bus_type);
 
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
 void nvdimm_bus_exit(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	driver_unregister(&nd_bus_driver.drv);
 	class_unregister(&nd_class);
 	unregister_chrdev(nvdimm_bus_major, "ndctl");
 	unregister_chrdev(nvdimm_major, "dimmctl");
 	bus_unregister(&nvdimm_bus_type);
 	ida_destroy(&nd_ida);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
