@@ -177,7 +177,7 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 
 static void drc_pmem_unbind(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t token = 0;
 	int64_t rc;
@@ -215,7 +215,7 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 
 static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
