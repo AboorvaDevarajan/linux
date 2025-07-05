@@ -31,6 +31,20 @@
 	 (1ul << ND_CMD_SET_CONFIG_DATA) | \
 	 (1ul << ND_CMD_CALL))
 
+// Debug macros for tracing
+#ifndef DBG_ENTRY
+#define DEBUG_TRACE_ENTRY_EXIT 1
+#if DEBUG_TRACE_ENTRY_EXIT
+#define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define DBG_ENTRY(fmt, ...)
+#define DBG_EXIT(fmt, ...)
+#define DBG_MID(fmt, ...)
+#endif
+#endif
+
 /* Struct holding a single performance metric */
 struct papr_scm_perf_stat {
 	u8 stat_id[8];
@@ -91,32 +105,39 @@ struct papr_scm_priv {
 static int papr_scm_pmem_flush(struct nd_region *nd_region,
 			       struct bio *bio __maybe_unused)
 {
+	DBG_ENTRY("");
 	struct papr_scm_priv *p = nd_region_provider_data(nd_region);
 	unsigned long ret_buf[PLPAR_HCALL_BUFSIZE], token = 0;
 	long rc;
 
 	dev_dbg(&p->pdev->dev, "flush drc 0x%x", p->drc_index);
-
+	DBG_MID("About to start flush loop for drc_index=0x%x", p->drc_index);
 	do {
 		rc = plpar_hcall(H_SCM_FLUSH, ret_buf, p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%ld, token=%lx", rc, token);
 		token = ret_buf[0];
 
 		/* Check if we are stalled for some time */
 		if (H_IS_LONG_BUSY(rc)) {
+			DBG_MID("H_IS_LONG_BUSY detected, sleeping for %d ms", get_longbusy_msecs(rc));
 			msleep(get_longbusy_msecs(rc));
 			rc = H_BUSY;
 		} else if (rc == H_BUSY) {
+			DBG_MID("H_BUSY detected, calling cond_resched()");
 			cond_resched();
 		}
 	} while (rc == H_BUSY);
 
 	if (rc) {
 		dev_err(&p->pdev->dev, "flush error: %ld", rc);
+		DBG_MID("Flush error: %ld", rc);
 		rc = -EIO;
 	} else {
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
+		DBG_MID("Flush complete for drc_index=0x%x", p->drc_index);
 	}
 
+	DBG_EXIT("rc=%ld", rc);
 	return rc;
 }
 
