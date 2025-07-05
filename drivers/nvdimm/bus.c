@@ -112,9 +112,10 @@ static int nvdimm_bus_probe(struct device *dev)
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	int rc;
 
-	if (!try_module_get(provider))
+	if (!try_module_get(provider)) {
 		DBG_EXIT("try_module_get failed");
 		return -ENXIO;
+	}
 
 	dev_dbg(&nvdimm_bus->dev, "START: %s.probe(%s)\n",
 			dev->driver->name, dev_name(dev));
@@ -189,9 +190,10 @@ void nvdimm_region_notify(struct nd_region *nd_region, enum nvdimm_event event)
 	DBG_ENTRY("event=%d", event);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(&nd_region->dev);
 
-	if (!nvdimm_bus)
+	if (!nvdimm_bus) {
 		DBG_EXIT("no nvdimm_bus");
 		return;
+	}
 
 	/* caller is responsible for holding a reference on the device */
 	nd_device_notify(&nd_region->dev, event);
