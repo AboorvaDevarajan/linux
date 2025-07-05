@@ -1245,12 +1245,13 @@ static umode_t papr_nd_attribute_visible(struct kobject *kobj,
 	struct device *dev = kobj_to_dev(kobj);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	struct papr_scm_priv *p = nvdimm_provider_data(nvdimm);
+	umode_t ret = attr->mode;
 
 	/* For if perf-stats not available remove perf_stats sysfs */
 	if (attr == &dev_attr_perf_stats.attr && p->stat_buffer_len == 0)
-		return 0;
+		ret = 0;
 
-	DBG_EXIT("ret=%u");
+	DBG_EXIT("ret=%u", ret);
 	return ret;
 }
 
