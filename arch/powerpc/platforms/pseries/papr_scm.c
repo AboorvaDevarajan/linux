@@ -568,34 +568,37 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p) { }
  */
 static int __drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	u64 bitmap = 0;
 	long rc;
 
-	/* issue the hcall */
 	rc = plpar_hcall(H_SCM_HEALTH, ret, p->drc_index);
-	if (rc == H_SUCCESS)
+	DBG_MID("plpar_hcall rc=%ld", rc);
+	if (rc == H_SUCCESS) {
 		bitmap = ret[0] & ret[1];
-	else if (rc == H_FUNCTION)
+		DBG_MID("Health hcall success, bitmap=0x%016llx", (unsigned long long)bitmap);
+	} else if (rc == H_FUNCTION) {
 		dev_info_once(&p->pdev->dev,
-			      "Hcall H_SCM_HEALTH not implemented, assuming empty health bitmap");
-	else {
-
+					  "Hcall H_SCM_HEALTH not implemented, assuming empty health bitmap");
+		DBG_MID("H_FUNCTION: not implemented, assuming empty health bitmap");
+	} else {
 		dev_err(&p->pdev->dev,
 			"Failed to query health information, Err:%ld\n", rc);
+		DBG_MID("Failed to query health, rc=%ld", rc);
+		DBG_EXIT("rc=%d", -ENXIO);
 		return -ENXIO;
 	}
 
 	p->lasthealth_jiffies = jiffies;
-	/* Allow injecting specific health bits via inject mask. */
 	if (p->health_bitmap_inject_mask)
 		bitmap = (bitmap & ~p->health_bitmap_inject_mask) |
 			p->health_bitmap_inject_mask;
 	WRITE_ONCE(p->health_bitmap, bitmap);
 	dev_dbg(&p->pdev->dev,
-		"Queried dimm health info. Bitmap:0x%016lx Mask:0x%016lx\n",
-		ret[0], ret[1]);
-
+		"Queried dimm health info. Bitmap:0x%016llx Mask:0x%016llx\n",
+		(unsigned long long)ret[0], (unsigned long long)ret[1]);
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -605,45 +608,52 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 /* Query cached health info and if needed call drc_pmem_query_health */
 static int drc_pmem_query_health(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	unsigned long cache_timeout;
 	int rc;
 
-	/* Protect concurrent modifications to papr_scm_priv */
 	rc = mutex_lock_interruptible(&p->health_mutex);
-	if (rc)
+	if (rc) {
+		DBG_MID("mutex_lock_interruptible failed, rc=%d", rc);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
+	}
 
-	/* Jiffies offset for which the health data is assumed to be same */
 	cache_timeout = p->lasthealth_jiffies +
 		secs_to_jiffies(MIN_HEALTH_QUERY_INTERVAL);
-
-	/* Fetch new health info is its older than MIN_HEALTH_QUERY_INTERVAL */
-	if (time_after(jiffies, cache_timeout))
+	DBG_MID("cache_timeout=%lu, jiffies=%lu", cache_timeout, jiffies);
+	if (time_after(jiffies, cache_timeout)) {
 		rc = __drc_pmem_query_health(p);
-	else
-		/* Assume cached health data is valid */
+		DBG_MID("Queried new health info, rc=%d", rc);
+	} else {
 		rc = 0;
+		DBG_MID("Using cached health info");
+	}
 
 	mutex_unlock(&p->health_mutex);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static int papr_scm_meta_get(struct papr_scm_priv *p,
 			     struct nd_cmd_get_config_data_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", (unsigned int)p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
 	unsigned long data[PLPAR_HCALL_BUFSIZE];
 	unsigned long offset, data_offset;
 	int len, read;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		DBG_MID("Input range out of bounds: in_offset=%lu, in_length=%lu, metadata_size=%d", (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length, p->metadata_size);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	for (len = hdr->in_length; len; len -= read) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
-
+		DBG_MID("Reading len=%d, data_offset=%lu, offset=%lu", len, data_offset, offset);
 		if (len >= 8)
 			read = 8;
 		else if (len >= 4)
@@ -653,51 +663,64 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 		else
 			read = 1;
 
+		DBG_MID("Calling plpar_hcall H_SCM_READ_METADATA, read=%d", read);
 		ret = plpar_hcall(H_SCM_READ_METADATA, data, p->drc_index,
 				  offset, read);
-
-		if (ret == H_PARAMETER) /* bad DRC index */
+		DBG_MID("plpar_hcall returned ret=%lld", (long long)ret);
+		if (ret == H_PARAMETER) {
+			DBG_MID("bad DRC index");
+			DBG_EXIT("rc=%d", -ENODEV);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			DBG_MID("other invalid parameter");
+			DBG_EXIT("rc=%d", -EINVAL);
+			return -EINVAL;
+		}
 
 		switch (read) {
 		case 8:
+			DBG_MID("Copying 8 bytes to out_buf+%lu", data_offset);
 			*(uint64_t *)(hdr->out_buf + data_offset) = be64_to_cpu(data[0]);
 			break;
 		case 4:
+			DBG_MID("Copying 4 bytes to out_buf+%lu", data_offset);
 			*(uint32_t *)(hdr->out_buf + data_offset) = be32_to_cpu(data[0] & 0xffffffff);
 			break;
-
 		case 2:
+			DBG_MID("Copying 2 bytes to out_buf+%lu", data_offset);
 			*(uint16_t *)(hdr->out_buf + data_offset) = be16_to_cpu(data[0] & 0xffff);
 			break;
-
 		case 1:
+			DBG_MID("Copying 1 byte to out_buf+%lu", data_offset);
 			*(uint8_t *)(hdr->out_buf + data_offset) = (data[0] & 0xff);
 			break;
 		}
 	}
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
 static int papr_scm_meta_set(struct papr_scm_priv *p,
 			     struct nd_cmd_set_config_hdr *hdr)
 {
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", (unsigned int)p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
 	unsigned long offset, data_offset;
 	int len, wrote;
 	unsigned long data;
 	__be64 data_be;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		DBG_MID("Input range out of bounds: in_offset=%lu, in_length=%lu, metadata_size=%d", (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length, p->metadata_size);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
+	}
 
 	for (len = hdr->in_length; len; len -= wrote) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
-
+		DBG_MID("Writing len=%d, data_offset=%lu, offset=%lu", len, data_offset, offset);
 		if (len >= 8) {
 			data = *(uint64_t *)(hdr->in_buf + data_offset);
 			data_be = cpu_to_be64(data);
@@ -718,14 +741,22 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 			wrote = 1;
 		}
 
+		DBG_MID("Calling plpar_hcall_norets H_SCM_WRITE_METADATA, wrote=%d", wrote);
 		ret = plpar_hcall_norets(H_SCM_WRITE_METADATA, p->drc_index,
 					 offset, data_be, wrote);
-		if (ret == H_PARAMETER) /* bad DRC index */
+		DBG_MID("plpar_hcall_norets returned ret=%lld", (long long)ret);
+		if (ret == H_PARAMETER) {
+			DBG_MID("bad DRC index");
+			DBG_EXIT("rc=%d", -ENODEV);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			DBG_MID("other invalid parameter");
+			DBG_EXIT("rc=%d", -EINVAL);
+			return -EINVAL;
+		}
 	}
-
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
