@@ -1032,7 +1032,7 @@ static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 				 struct nd_cmd_pkg *pkg)
 {
-	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x", (unsigned int)p->drc_index, pkg->nd_command);
+	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x", (unsigned int)p->drc_index, (unsigned int)pkg->nd_command);
 	struct nd_pkg_pdsm *pdsm_pkg = (struct nd_pkg_pdsm *)pkg->nd_payload;
 	enum papr_pdsm pdsm = (enum papr_pdsm)pkg->nd_command;
 	const struct pdsm_cmd_desc *pdsc;
@@ -1276,7 +1276,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	struct nd_region_desc ndr_desc;
 	unsigned long dimm_flags;
 	int target_nid, online_nid;
-	int rc = 0;
+
 	p->bus_desc.ndctl = papr_scm_ndctl;
 	p->bus_desc.module = THIS_MODULE;
 	p->bus_desc.of_node = p->pdev->dev.of_node;
@@ -1410,8 +1410,13 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 		papr_scm_add_badblock(p->region, p->bus, phys_addr);
 	}
 	mutex_unlock(&papr_ndr_lock);
-	DBG_EXIT(found ? "NOTIFY_OK" : "NOTIFY_DONE");
-	return found ? NOTIFY_OK : NOTIFY_DONE;
+	if (found) {
+		DBG_EXIT("NOTIFY_OK");
+		return NOTIFY_OK;
+	} else {
+		DBG_EXIT("NOTIFY_DONE");
+		return NOTIFY_DONE;
+	}
 }
 
 static struct notifier_block mce_ue_nb = {
