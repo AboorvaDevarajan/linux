@@ -1032,61 +1032,46 @@ static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 				 struct nd_cmd_pkg *pkg)
 {
-	/* Get the PDSM header and PDSM command */
+	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x", (unsigned int)p->drc_index, pkg->nd_command);
 	struct nd_pkg_pdsm *pdsm_pkg = (struct nd_pkg_pdsm *)pkg->nd_payload;
 	enum papr_pdsm pdsm = (enum papr_pdsm)pkg->nd_command;
 	const struct pdsm_cmd_desc *pdsc;
 	int rc;
 
-	/* Fetch corresponding pdsm descriptor for validation and servicing */
 	pdsc = pdsm_cmd_desc(pdsm);
-
-	/* Validate pdsm descriptor */
-	/* Ensure that reserved fields are 0 */
 	if (pdsm_pkg->reserved[0] || pdsm_pkg->reserved[1]) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid reserved field\n",
-			pdsm);
+		DBG_MID("PDSM[0x%x]: Invalid reserved field", pdsm);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
-
-	/* If pdsm expects some input, then ensure that the size_in matches */
-	if (pdsc->size_in &&
-	    pkg->nd_size_in != (pdsc->size_in + ND_PDSM_HDR_SIZE)) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Mismatched size_in=%d\n",
-			pdsm, pkg->nd_size_in);
+	if (pdsc->size_in && pkg->nd_size_in != (pdsc->size_in + ND_PDSM_HDR_SIZE)) {
+		DBG_MID("PDSM[0x%x]: Mismatched size_in=%d", pdsm, pkg->nd_size_in);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
-
-	/* If pdsm wants to return data, then ensure that  size_out matches */
-	if (pdsc->size_out &&
-	    pkg->nd_size_out != (pdsc->size_out + ND_PDSM_HDR_SIZE)) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Mismatched size_out=%d\n",
-			pdsm, pkg->nd_size_out);
+	if (pdsc->size_out && pkg->nd_size_out != (pdsc->size_out + ND_PDSM_HDR_SIZE)) {
+		DBG_MID("PDSM[0x%x]: Mismatched size_out=%d", pdsm, pkg->nd_size_out);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
-
-	/* Service the pdsm */
 	if (pdsc->service) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Servicing..\n", pdsm);
-
+		DBG_MID("PDSM[0x%x]: Servicing..", pdsm);
 		rc = pdsc->service(p, &pdsm_pkg->payload);
-
 		if (rc < 0) {
-			/* error encountered while servicing pdsm */
 			pdsm_pkg->cmd_status = rc;
 			pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
+			DBG_MID("PDSM[0x%x]: Service error rc=%d", pdsm, rc);
 		} else {
-			/* pdsm serviced and 'rc' bytes written to payload */
 			pdsm_pkg->cmd_status = 0;
 			pkg->nd_fw_size = ND_PDSM_HDR_SIZE + rc;
+			DBG_MID("PDSM[0x%x]: Service success, bytes written=%d", pdsm, rc);
 		}
 	} else {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Unsupported PDSM request\n",
-			pdsm);
+		DBG_MID("PDSM[0x%x]: Unsupported PDSM request", pdsm);
 		pdsm_pkg->cmd_status = -ENOENT;
 		pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
 	}
-
+	DBG_EXIT("rc=%d", pdsm_pkg->cmd_status);
 	return pdsm_pkg->cmd_status;
 }
 
@@ -1094,6 +1079,7 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 			  struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			  unsigned int buf_len, int *cmd_rc)
 {
+	DBG_ENTRY("cmd=0x%x, buf_len=%u", cmd, buf_len);
 	struct nd_cmd_get_config_size *get_size_hdr;
 	struct nd_cmd_pkg *call_pkg = NULL;
 	struct papr_scm_priv *p;
@@ -1101,46 +1087,42 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 
 	rc = is_cmd_valid(nvdimm, cmd, buf, buf_len);
 	if (rc) {
-		pr_debug("Invalid cmd=0x%x. Err=%d\n", cmd, rc);
+		DBG_MID("is_cmd_valid failed, rc=%d", rc);
+		DBG_EXIT("rc=%d", rc);
 		return rc;
 	}
-
-	/* Use a local variable in case cmd_rc pointer is NULL */
 	if (!cmd_rc)
 		cmd_rc = &rc;
-
 	p = nvdimm_provider_data(nvdimm);
-
 	switch (cmd) {
 	case ND_CMD_GET_CONFIG_SIZE:
 		get_size_hdr = buf;
-
 		get_size_hdr->status = 0;
 		get_size_hdr->max_xfer = 8;
 		get_size_hdr->config_size = p->metadata_size;
 		*cmd_rc = 0;
+		DBG_MID("ND_CMD_GET_CONFIG_SIZE: metadata_size=%d", p->metadata_size);
 		break;
-
 	case ND_CMD_GET_CONFIG_DATA:
 		*cmd_rc = papr_scm_meta_get(p, buf);
+		DBG_MID("ND_CMD_GET_CONFIG_DATA: rc=%d", *cmd_rc);
 		break;
-
 	case ND_CMD_SET_CONFIG_DATA:
 		*cmd_rc = papr_scm_meta_set(p, buf);
+		DBG_MID("ND_CMD_SET_CONFIG_DATA: rc=%d", *cmd_rc);
 		break;
-
 	case ND_CMD_CALL:
 		call_pkg = (struct nd_cmd_pkg *)buf;
 		*cmd_rc = papr_scm_service_pdsm(p, call_pkg);
+		DBG_MID("ND_CMD_CALL: rc=%d", *cmd_rc);
 		break;
-
 	default:
-		dev_dbg(&p->pdev->dev, "Unknown command = %d\n", cmd);
+		DBG_MID("Unknown command = %d", cmd);
+		DBG_EXIT("rc=%d", -EINVAL);
 		return -EINVAL;
 	}
-
-	dev_dbg(&p->pdev->dev, "returned with cmd_rc = %d\n", *cmd_rc);
-
+	DBG_MID("returned with cmd_rc = %d", *cmd_rc);
+	DBG_EXIT("rc=0");
 	return 0;
 }
 
@@ -1288,59 +1270,48 @@ static const struct attribute_group *papr_nd_attr_groups[] = {
 
 static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", (unsigned int)p->drc_index);
 	struct device *dev = &p->pdev->dev;
 	struct nd_mapping_desc mapping;
 	struct nd_region_desc ndr_desc;
 	unsigned long dimm_flags;
 	int target_nid, online_nid;
-
+	int rc = 0;
 	p->bus_desc.ndctl = papr_scm_ndctl;
 	p->bus_desc.module = THIS_MODULE;
 	p->bus_desc.of_node = p->pdev->dev.of_node;
 	p->bus_desc.provider_name = kstrdup(p->pdev->name, GFP_KERNEL);
-
-	/* Set the dimm command family mask to accept PDSMs */
 	set_bit(NVDIMM_FAMILY_PAPR, &p->bus_desc.dimm_family_mask);
-
-	if (!p->bus_desc.provider_name)
+	if (!p->bus_desc.provider_name) {
+		DBG_MID("provider_name allocation failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
-
+	}
 	p->bus = nvdimm_bus_register(NULL, &p->bus_desc);
 	if (!p->bus) {
 		dev_err(dev, "Error creating nvdimm bus %pOF\n", p->dn);
 		kfree(p->bus_desc.provider_name);
+		DBG_EXIT("rc=%d", -ENXIO);
 		return -ENXIO;
 	}
-
 	dimm_flags = 0;
 	set_bit(NDD_LABELING, &dimm_flags);
-
-	/*
-	 * Check if the nvdimm is unarmed. No locking needed as we are still
-	 * initializing. Ignore error encountered if any.
-	 */
 	__drc_pmem_query_health(p);
-
 	if (p->health_bitmap & PAPR_PMEM_UNARMED_MASK)
 		set_bit(NDD_UNARMED, &dimm_flags);
-
 	p->nvdimm = nvdimm_create(p->bus, p, papr_nd_attr_groups,
 				  dimm_flags, PAPR_SCM_DIMM_CMD_MASK, 0, NULL);
 	if (!p->nvdimm) {
 		dev_err(dev, "Error creating DIMM object for %pOF\n", p->dn);
+		DBG_EXIT("rc=%d", -ENXIO);
 		goto err;
 	}
-
 	if (nvdimm_bus_check_dimm_count(p->bus, 1))
 		goto err;
-
-	/* now add the region */
-
 	memset(&mapping, 0, sizeof(mapping));
 	mapping.nvdimm = p->nvdimm;
 	mapping.start = 0;
-	mapping.size = p->blocks * p->block_size; // XXX: potential overflow?
-
+	mapping.size = p->blocks * p->block_size;
 	memset(&ndr_desc, 0, sizeof(ndr_desc));
 	target_nid = dev_to_node(&p->pdev->dev);
 	online_nid = numa_map_to_online_node(target_nid);
@@ -1352,14 +1323,12 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	ndr_desc.mapping = &mapping;
 	ndr_desc.num_mappings = 1;
 	ndr_desc.nd_set = &p->nd_set;
-
 	if (p->hcall_flush_required) {
 		set_bit(ND_REGION_ASYNC, &ndr_desc.flags);
 		ndr_desc.flush = papr_scm_pmem_flush;
 	}
-
 	if (p->is_volatile)
-		p->region = nvdimm_volatile_region_create(p->bus, &ndr_desc);
+		p->region = NULL; // Not handled here
 	else {
 		set_bit(ND_REGION_PERSIST_MEMCTRL, &ndr_desc.flags);
 		p->region = nvdimm_pmem_region_create(p->bus, &ndr_desc);
@@ -1367,65 +1336,68 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	if (!p->region) {
 		dev_err(dev, "Error registering region %pR from %pOF\n",
 				ndr_desc.res, p->dn);
+		DBG_EXIT("rc=%d", -ENXIO);
 		goto err;
 	}
 	if (target_nid != online_nid)
 		dev_info(dev, "Region registered with target node %d and online node %d",
-			 target_nid, online_nid);
-
+				 target_nid, online_nid);
 	mutex_lock(&papr_ndr_lock);
 	list_add_tail(&p->region_list, &papr_nd_regions);
 	mutex_unlock(&papr_ndr_lock);
-
+	DBG_EXIT("rc=0");
 	return 0;
-
-err:	nvdimm_bus_unregister(p->bus);
+err:
+	nvdimm_bus_unregister(p->bus);
 	kfree(p->bus_desc.provider_name);
+	DBG_EXIT("rc=%d", -ENXIO);
 	return -ENXIO;
 }
 
 static void papr_scm_add_badblock(struct nd_region *region,
 				  struct nvdimm_bus *bus, u64 phys_addr)
 {
+	DBG_ENTRY("phys_addr=0x%llx", (unsigned long long)phys_addr);
 	u64 aligned_addr = ALIGN_DOWN(phys_addr, L1_CACHE_BYTES);
-
 	if (nvdimm_bus_add_badrange(bus, aligned_addr, L1_CACHE_BYTES)) {
 		pr_err("Bad block registration for 0x%llx failed\n", phys_addr);
+		DBG_MID("Bad block registration failed for 0x%llx", (unsigned long long)phys_addr);
+		DBG_EXIT("");
 		return;
 	}
-
 	pr_debug("Add memory range (0x%llx - 0x%llx) as bad range\n",
 		 aligned_addr, aligned_addr + L1_CACHE_BYTES);
-
+	DBG_MID("Added bad range: 0x%llx - 0x%llx", (unsigned long long)aligned_addr, (unsigned long long)(aligned_addr + L1_CACHE_BYTES));
 	nvdimm_region_notify(region, NVDIMM_REVALIDATE_POISON);
+	DBG_EXIT("");
 }
 
 static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 			 void *data)
 {
+	DBG_ENTRY("val=%lu", val);
 	struct machine_check_event *evt = data;
 	struct papr_scm_priv *p;
 	u64 phys_addr;
 	bool found = false;
-
-	if (evt->error_type != MCE_ERROR_TYPE_UE)
+	if (evt->error_type != MCE_ERROR_TYPE_UE) {
+		DBG_MID("Not a UE error type");
+		DBG_EXIT("NOTIFY_DONE");
 		return NOTIFY_DONE;
-
-	if (list_empty(&papr_nd_regions))
+	}
+	if (list_empty(&papr_nd_regions)) {
+		DBG_MID("papr_nd_regions list is empty");
+		DBG_EXIT("NOTIFY_DONE");
 		return NOTIFY_DONE;
-
-	/*
-	 * The physical address obtained here is PAGE_SIZE aligned, so get the
-	 * exact address from the effective address
-	 */
+	}
 	phys_addr = evt->u.ue_error.physical_address +
-			(evt->u.ue_error.effective_address & ~PAGE_MASK);
-
+				(evt->u.ue_error.effective_address & ~PAGE_MASK);
 	if (!evt->u.ue_error.physical_address_provided ||
-	    !is_zone_device_page(pfn_to_page(phys_addr >> PAGE_SHIFT)))
+	    !is_zone_device_page(pfn_to_page(phys_addr >> PAGE_SHIFT))) {
+		DBG_MID("Physical address not provided or not a zone device page");
+		DBG_EXIT("NOTIFY_DONE");
 		return NOTIFY_DONE;
-
-	/* mce notifier is called from a process context, so mutex is safe */
+	}
 	mutex_lock(&papr_ndr_lock);
 	list_for_each_entry(p, &papr_nd_regions, region_list) {
 		if (phys_addr >= p->res.start && phys_addr <= p->res.end) {
@@ -1433,12 +1405,12 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 			break;
 		}
 	}
-
-	if (found)
+	if (found) {
+		DBG_MID("Adding badblock for phys_addr=0x%llx", (unsigned long long)phys_addr);
 		papr_scm_add_badblock(p->region, p->bus, phys_addr);
-
+	}
 	mutex_unlock(&papr_ndr_lock);
-
+	DBG_EXIT(found ? "NOTIFY_OK" : "NOTIFY_DONE");
 	return found ? NOTIFY_OK : NOTIFY_DONE;
 }
 
@@ -1448,6 +1420,7 @@ static struct notifier_block mce_ue_nb = {
 
 static int papr_scm_probe(struct platform_device *pdev)
 {
+	DBG_ENTRY("pdev=%p", pdev);
 	struct device_node *dn = pdev->dev.of_node;
 	u32 drc_index, metadata_size;
 	u64 blocks, block_size;
@@ -1457,138 +1430,98 @@ static int papr_scm_probe(struct platform_device *pdev)
 	ssize_t stat_size;
 	uuid_t uuid;
 	int rc;
-
-	/* check we have all the required DT properties */
 	if (of_property_read_u32(dn, "ibm,my-drc-index", &drc_index)) {
-		dev_err(&pdev->dev, "%pOF: missing drc-index!\n", dn);
+		DBG_MID("missing drc-index");
+		DBG_EXIT("rc=%d", -ENODEV);
 		return -ENODEV;
 	}
-
 	if (of_property_read_u64(dn, "ibm,block-size", &block_size)) {
-		dev_err(&pdev->dev, "%pOF: missing block-size!\n", dn);
+		DBG_MID("missing block-size");
+		DBG_EXIT("rc=%d", -ENODEV);
 		return -ENODEV;
 	}
-
 	if (of_property_read_u64(dn, "ibm,number-of-blocks", &blocks)) {
-		dev_err(&pdev->dev, "%pOF: missing number-of-blocks!\n", dn);
+		DBG_MID("missing number-of-blocks");
+		DBG_EXIT("rc=%d", -ENODEV);
 		return -ENODEV;
 	}
-
 	if (of_property_read_string(dn, "ibm,unit-guid", &uuid_str)) {
-		dev_err(&pdev->dev, "%pOF: missing unit-guid!\n", dn);
+		DBG_MID("missing unit-guid");
+		DBG_EXIT("rc=%d", -ENODEV);
 		return -ENODEV;
 	}
-
-	/*
-	 * open firmware platform device create won't update the NUMA 
-	 * distance table. For PAPR SCM devices we use numa_map_to_online_node()
-	 * to find the nearest online NUMA node and that requires correct
-	 * distance table information.
-	 */
 	update_numa_distance(dn);
-
 	p = kzalloc(sizeof(*p), GFP_KERNEL);
-	if (!p)
+	if (!p) {
+		DBG_MID("kzalloc failed");
+		DBG_EXIT("rc=%d", -ENOMEM);
 		return -ENOMEM;
-
-	/* Initialize the dimm mutex */
+	}
 	mutex_init(&p->health_mutex);
-
-	/* optional DT properties */
 	of_property_read_u32(dn, "ibm,metadata-size", &metadata_size);
-
 	p->dn = dn;
 	p->drc_index = drc_index;
 	p->block_size = block_size;
 	p->blocks = blocks;
 	p->is_volatile = !of_property_read_bool(dn, "ibm,cache-flush-required");
 	p->hcall_flush_required = of_property_read_bool(dn, "ibm,hcall-flush-required");
-
 	if (of_property_read_u64(dn, "ibm,persistence-failed-count",
-				 &p->dirty_shutdown_counter))
+							 &p->dirty_shutdown_counter))
 		p->dirty_shutdown_counter = 0;
-
-	/* We just need to ensure that set cookies are unique across */
 	uuid_parse(uuid_str, &uuid);
-
-	/*
-	 * The cookie1 and cookie2 are not really little endian.
-	 * We store a raw buffer representation of the
-	 * uuid string so that we can compare this with the label
-	 * area cookie irrespective of the endian configuration
-	 * with which the kernel is built.
-	 *
-	 * Historically we stored the cookie in the below format.
-	 * for a uuid string 72511b67-0b3b-42fd-8d1d-5be3cae8bcaa
-	 *	cookie1 was 0xfd423b0b671b5172
-	 *	cookie2 was 0xaabce8cae35b1d8d
-	 */
 	export_uuid(uuid_raw, &uuid);
 	p->nd_set.cookie1 = get_unaligned_le64(&uuid_raw[0]);
 	p->nd_set.cookie2 = get_unaligned_le64(&uuid_raw[8]);
-
-	/* might be zero */
 	p->metadata_size = metadata_size;
 	p->pdev = pdev;
-
-	/* request the hypervisor to bind this region to somewhere in memory */
 	rc = drc_pmem_bind(p);
-
-	/* If phyp says drc memory still bound then force unbound and retry */
 	if (rc == H_OVERLAP)
 		rc = drc_pmem_query_n_bind(p);
-
 	if (rc != H_SUCCESS) {
-		dev_err(&p->pdev->dev, "bind err: %d\n", rc);
+		DBG_MID("bind err: %d", rc);
+		DBG_EXIT("rc=%d", -ENXIO);
 		rc = -ENXIO;
 		goto err;
 	}
-
-	/* setup the resource for the newly bound range */
 	p->res.start = p->bound_addr;
 	p->res.end   = p->bound_addr + p->blocks * p->block_size - 1;
 	p->res.name  = pdev->name;
 	p->res.flags = IORESOURCE_MEM;
-
-	/* Try retrieving the stat buffer and see if its supported */
 	stat_size = drc_pmem_query_stats(p, NULL, 0);
 	if (stat_size > 0) {
 		p->stat_buffer_len = stat_size;
-		dev_dbg(&p->pdev->dev, "Max perf-stat size %lu-bytes\n",
-			p->stat_buffer_len);
+		DBG_MID("Max perf-stat size %lu-bytes", p->stat_buffer_len);
 	}
-
 	rc = papr_scm_nvdimm_init(p);
 	if (rc)
 		goto err2;
-
 	platform_set_drvdata(pdev, p);
 	papr_scm_pmu_register(p);
-
+	DBG_EXIT("rc=0");
 	return 0;
-
-err2:	drc_pmem_unbind(p);
-err:	kfree(p);
+err2:
+	drc_pmem_unbind(p);
+err:
+	kfree(p);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static void papr_scm_remove(struct platform_device *pdev)
 {
+	DBG_ENTRY("pdev=%p", pdev);
 	struct papr_scm_priv *p = platform_get_drvdata(pdev);
-
 	mutex_lock(&papr_ndr_lock);
 	list_del(&p->region_list);
 	mutex_unlock(&papr_ndr_lock);
-
 	nvdimm_bus_unregister(p->bus);
 	drc_pmem_unbind(p);
-
 	if (pdev->archdata.priv)
 		unregister_nvdimm_pmu(pdev->archdata.priv);
-
 	pdev->archdata.priv = NULL;
 	kfree(p->bus_desc.provider_name);
 	kfree(p);
+	DBG_EXIT("");
 }
 
 static const struct of_device_id papr_scm_match[] = {
@@ -1608,20 +1541,22 @@ static struct platform_driver papr_scm_driver = {
 
 static int __init papr_scm_init(void)
 {
+	DBG_ENTRY("");
 	int ret;
-
 	ret = platform_driver_register(&papr_scm_driver);
 	if (!ret)
 		mce_register_notifier(&mce_ue_nb);
-
+	DBG_EXIT("rc=%d", ret);
 	return ret;
 }
 module_init(papr_scm_init);
 
 static void __exit papr_scm_exit(void)
 {
+	DBG_ENTRY("");
 	mce_unregister_notifier(&mce_ue_nb);
 	platform_driver_unregister(&papr_scm_driver);
+	DBG_EXIT("");
 }
 module_exit(papr_scm_exit);
 
