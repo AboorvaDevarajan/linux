@@ -1328,7 +1328,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 		ndr_desc.flush = papr_scm_pmem_flush;
 	}
 	if (p->is_volatile)
-		p->region = NULL; // Not handled here
+		p->region = nvdimm_volatile_region_create(p->bus, &ndr_desc);
 	else {
 		set_bit(ND_REGION_PERSIST_MEMCTRL, &ndr_desc.flags);
 		p->region = nvdimm_pmem_region_create(p->bus, &ndr_desc);
