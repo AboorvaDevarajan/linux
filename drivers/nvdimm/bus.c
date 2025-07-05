@@ -45,18 +45,19 @@ static const struct class nd_class = {
 static int to_nd_device_type(const struct device *dev)
 {
 	DBG_ENTRY("");
-	if (is_nvdimm(dev))
+	if (is_nvdimm(dev)) {
 		DBG_EXIT("ND_DEVICE_DIMM");
 		return ND_DEVICE_DIMM;
-	else if (is_memory(dev))
+	} else if (is_memory(dev)) {
 		DBG_EXIT("ND_DEVICE_REGION_PMEM");
 		return ND_DEVICE_REGION_PMEM;
-	else if (is_nd_dax(dev))
+	} else if (is_nd_dax(dev)) {
 		DBG_EXIT("ND_DEVICE_DAX_PMEM");
 		return ND_DEVICE_DAX_PMEM;
-	else if (is_nd_region(dev->parent))
+	} else if (is_nd_region(dev->parent)) {
 		DBG_EXIT("nd_region_to_nstype");
 		return nd_region_to_nstype(to_nd_region(dev->parent));
+	}
 
 	DBG_EXIT("return 0");
 	return 0;
