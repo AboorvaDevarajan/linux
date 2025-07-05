@@ -146,22 +146,18 @@ static DEFINE_MUTEX(papr_ndr_lock);
 
 static int drc_pmem_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t saved = 0;
 	uint64_t token;
 	int64_t rc;
 
-	/*
-	 * When the hypervisor cannot map all the requested memory in a single
-	 * hcall it returns H_BUSY and we call again with the token until
-	 * we get H_SUCCESS. Aborting the retry loop before getting H_SUCCESS
-	 * leave the system in an undefined state, so we wait.
-	 */
 	token = 0;
-
+	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu", p->drc_index, p->blocks);
 	do {
 		rc = plpar_hcall(H_SCM_BIND_MEM, ret, p->drc_index, 0,
 				p->blocks, BIND_ANY_ADDR, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx, ret[1]=%lx", rc, token, ret[0], ret[1]);
 		token = ret[0];
 		if (!saved)
 			saved = ret[1];
@@ -169,16 +165,19 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	} while (rc == H_BUSY);
 
 	if (rc)
-		return rc;
+		DBG_MID("Bind failed with rc=%lld", rc);
+	else
+		DBG_MID("Bind succeeded, saved=0x%llx", saved);
 
 	p->bound_addr = saved;
-	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n",
-		p->drc_index, (unsigned long)saved);
+	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, (unsigned long)saved);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)saved);
 	return rc;
 }
 
 static void drc_pmem_unbind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	uint64_t token = 0;
 	int64_t rc;
@@ -191,6 +190,7 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 		/* Unbind of all SCM resources associated with drcIndex */
 		rc = plpar_hcall(H_SCM_UNBIND_ALL, ret, H_UNBIND_SCOPE_DRC,
 				 p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx", rc, token, ret[0]);
 		token = ret[0];
 
 		/* Check if we are stalled for some time */
@@ -209,42 +209,53 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 		dev_dbg(&p->pdev->dev, "unbind drc 0x%x complete\n",
 			p->drc_index);
 
+	DBG_EXIT("");
 	return;
 }
 
 static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 {
+	DBG_ENTRY("drc_index=0x%x", p->drc_index);
 	unsigned long start_addr;
 	unsigned long end_addr;
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	int64_t rc;
 
-
+	DBG_MID("Querying block mem binding for start");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, 0);
+	DBG_MID("plpar_hcall (start) rc=%lld, ret[0]=%lx", rc, ret[0]);
 	if (rc)
 		goto err_out;
 	start_addr = ret[0];
 
-	/* Make sure the full region is bound. */
+	DBG_MID("Querying block mem binding for end");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, p->blocks - 1);
+	DBG_MID("plpar_hcall (end) rc=%lld, ret[0]=%lx", rc, ret[0]);
 	if (rc)
 		goto err_out;
 	end_addr = ret[0];
 
-	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size))
+	DBG_MID("start_addr=0x%lx, end_addr=0x%lx, expected diff=0x%llx", start_addr, end_addr, (p->blocks - 1) * p->block_size);
+	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size)) {
+		DBG_MID("Address range mismatch: (end-start)=0x%lx", end_addr - start_addr);
 		goto err_out;
+	}
 
 	p->bound_addr = start_addr;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, start_addr);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, start_addr);
 	return rc;
 
 err_out:
 	dev_info(&p->pdev->dev,
 		 "Failed to query, trying an unbind followed by bind");
+	DBG_MID("Calling drc_pmem_unbind and drc_pmem_bind");
 	drc_pmem_unbind(p);
-	return drc_pmem_bind(p);
+	rc = drc_pmem_bind(p);
+	DBG_EXIT("rc=%ld (after unbind/bind)", rc);
+	return rc;
 }
 
 /*
