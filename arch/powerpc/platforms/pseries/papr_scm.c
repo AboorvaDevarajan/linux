@@ -28,9 +28,11 @@
 #if DEBUG_TRACE_ENTRY_EXIT
 #define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
 #define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
 #else
 #define DBG_ENTRY(fmt, ...)
 #define DBG_EXIT(fmt, ...)
+#define DBG_MID(fmt, ...)
 #endif
 
 #define BIND_ANY_ADDR (~0ul)
@@ -107,28 +109,32 @@ static int papr_scm_pmem_flush(struct nd_region *nd_region,
 	long rc;
 
 	dev_dbg(&p->pdev->dev, "flush drc 0x%x", p->drc_index);
-
+	DBG_MID("About to start flush loop for drc_index=0x%x");
 	do {
 		rc = plpar_hcall(H_SCM_FLUSH, ret_buf, p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%ld, token=%lx");
 		token = ret_buf[0];
 
-		/* Check if we are stalled for some time */
 		if (H_IS_LONG_BUSY(rc)) {
+			DBG_MID("H_IS_LONG_BUSY detected, sleeping for %d ms", get_longbusy_msecs(rc));
 			msleep(get_longbusy_msecs(rc));
 			rc = H_BUSY;
 		} else if (rc == H_BUSY) {
+			DBG_MID("H_BUSY detected, calling cond_resched()");
 			cond_resched();
 		}
 	} while (rc == H_BUSY);
 
 	if (rc) {
 		dev_err(&p->pdev->dev, "flush error: %ld", rc);
+		DBG_MID("Flush error: %ld");
 		rc = -EIO;
 	} else {
 		dev_dbg(&p->pdev->dev, "flush drc 0x%x complete", p->drc_index);
+		DBG_MID("Flush complete for drc_index=0x%x");
 	}
 
-	DBG_EXIT("rc=%ld", rc);
+	DBG_EXIT("rc=%ld");
 	return rc;
 }
 
@@ -143,17 +149,12 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	uint64_t token;
 	int64_t rc;
 
-	/*
-	 * When the hypervisor cannot map all the requested memory in a single
-	 * hcall it returns H_BUSY and we call again with the token until
-	 * we get H_SUCCESS. Aborting the retry loop before getting H_SUCCESS
-	 * leave the system in an undefined state, so we wait.
-	 */
 	token = 0;
-
+	DBG_MID("Starting bind loop for drc_index=0x%x, blocks=%llu");
 	do {
 		rc = plpar_hcall(H_SCM_BIND_MEM, ret, p->drc_index, 0,
 				p->blocks, BIND_ANY_ADDR, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx, ret[1]=%lx");
 		token = ret[0];
 		if (!saved)
 			saved = ret[1];
@@ -161,12 +162,14 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 	} while (rc == H_BUSY);
 
 	if (rc)
-		return rc;
+		DBG_MID("Bind failed with rc=%lld");
+	else
+		DBG_MID("Bind succeeded, saved=0x%llx");
 
 	p->bound_addr = saved;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n",
 		p->drc_index, (unsigned long)saved);
-	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)p->bound_addr);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx");
 	return rc;
 }
 
@@ -178,20 +181,19 @@ static void drc_pmem_unbind(struct papr_scm_priv *p)
 	int64_t rc;
 
 	dev_dbg(&p->pdev->dev, "unbind drc 0x%x\n", p->drc_index);
-
-	/* NB: unbind has the same retry requirements as drc_pmem_bind() */
+	DBG_MID("Starting unbind loop for drc_index=0x%x");
 	do {
-
-		/* Unbind of all SCM resources associated with drcIndex */
 		rc = plpar_hcall(H_SCM_UNBIND_ALL, ret, H_UNBIND_SCOPE_DRC,
 				 p->drc_index, token);
+		DBG_MID("plpar_hcall returned rc=%lld, token=%lx, ret[0]=%lx");
 		token = ret[0];
 
-		/* Check if we are stalled for some time */
 		if (H_IS_LONG_BUSY(rc)) {
+			DBG_MID("H_IS_LONG_BUSY detected, sleeping for %d ms", get_longbusy_msecs(rc));
 			msleep(get_longbusy_msecs(rc));
 			rc = H_BUSY;
 		} else if (rc == H_BUSY) {
+			DBG_MID("H_BUSY detected, calling cond_resched()");
 			cond_resched();
 		}
 
@@ -215,31 +217,37 @@ static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	int64_t rc;
 
-
+	DBG_MID("Querying block mem binding for start");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, 0);
+	DBG_MID("plpar_hcall (start) rc=%lld, ret[0]=%lx");
 	if (rc)
 		goto err_out;
 	start_addr = ret[0];
 
-	/* Make sure the full region is bound. */
+	DBG_MID("Querying block mem binding for end");
 	rc = plpar_hcall(H_SCM_QUERY_BLOCK_MEM_BINDING, ret,
 			 p->drc_index, p->blocks - 1);
+	DBG_MID("plpar_hcall (end) rc=%lld, ret[0]=%lx");
 	if (rc)
 		goto err_out;
 	end_addr = ret[0];
 
-	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size))
+	DBG_MID("start_addr=0x%lx, end_addr=0x%lx, expected diff=0x%llx", start_addr, end_addr, (p->blocks - 1) * p->block_size);
+	if ((end_addr - start_addr) != ((p->blocks - 1) * p->block_size)) {
+		DBG_MID("Address range mismatch: (end-start)=0x%lx");
 		goto err_out;
+	}
 
 	p->bound_addr = start_addr;
 	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, start_addr);
-	DBG_EXIT("rc=%ld, bound_addr=0x%lx", rc, (unsigned long)p->bound_addr);
+	DBG_EXIT("rc=%ld, bound_addr=0x%lx");
 	return rc;
 
 err_out:
 	dev_info(&p->pdev->dev,
 		 "Failed to query, trying an unbind followed by bind");
+	DBG_MID("Calling drc_pmem_unbind and drc_pmem_bind");
 	drc_pmem_unbind(p);
 	return drc_pmem_bind(p);
 }
@@ -265,8 +273,8 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 	size_t size;
 	s64 rc;
 
-	/* Setup the out buffer */
 	if (buff_stats) {
+		DBG_MID("Setting up out buffer: stats_version=%d, num_statistics=%u", PAPR_SCM_PERF_STATS_VERSION, num_stats);
 		memcpy(buff_stats->eye_catcher,
 		       PAPR_SCM_PERF_STATS_EYECATCHER, 8);
 		buff_stats->stats_version =
@@ -274,55 +282,55 @@ static ssize_t drc_pmem_query_stats(struct papr_scm_priv *p,
 		buff_stats->num_statistics =
 			cpu_to_be32(num_stats);
 
-		/*
-		 * Calculate the buffer size based on num-stats provided
-		 * or use the prefetched max buffer length
-		 */
 		if (num_stats)
-			/* Calculate size from the num_stats */
 			size = sizeof(struct papr_scm_perf_stats) +
 				num_stats * sizeof(struct papr_scm_perf_stat);
 		else
 			size = p->stat_buffer_len;
+		DBG_MID("Buffer size calculated: %zu");
 	} else {
-		/* In case of no out buffer ignore the size */
 		size = 0;
+		DBG_MID("No out buffer, size=0");
 	}
 
-	/* Do the HCALL asking PHYP for info */
+	DBG_MID("Calling plpar_hcall for performance stats, size=%zu");
 	rc = plpar_hcall(H_SCM_PERFORMANCE_STATS, ret, p->drc_index,
 			 buff_stats ? virt_to_phys(buff_stats) : 0,
 			 size);
+	DBG_MID("plpar_hcall rc=%lld, ret[0]=%lx");
 
-	/* Check if the error was due to an unknown stat-id */
 	if (rc == H_PARTIAL) {
 		dev_err(&p->pdev->dev,
 			"Unknown performance stats, Err:0x%016lX\n", ret[0]);
+		DBG_MID("H_PARTIAL error, returning -ENOENT");
 		return -ENOENT;
 	} else if (rc == H_AUTHORITY) {
 		dev_info(&p->pdev->dev,
 			 "Permission denied while accessing performance stats");
+		DBG_MID("H_AUTHORITY error, returning -EPERM");
 		return -EPERM;
 	} else if (rc == H_UNSUPPORTED) {
 		dev_dbg(&p->pdev->dev, "Performance stats unsupported\n");
+		DBG_MID("H_UNSUPPORTED error, returning -EOPNOTSUPP");
 		return -EOPNOTSUPP;
 	} else if (rc != H_SUCCESS) {
 		dev_err(&p->pdev->dev,
 			"Failed to query performance stats, Err:%lld\n", rc);
+		DBG_MID("General error, returning -EIO");
 		return -EIO;
 
 	} else if (!size) {
-		/* Handle case where stat buffer size was requested */
 		dev_dbg(&p->pdev->dev,
 			"Performance stats size %ld\n", ret[0]);
+		DBG_MID("Queried stat buffer size: %ld");
 		return ret[0];
 	}
 
-	/* Successfully fetched the requested stats from phyp */
 	dev_dbg(&p->pdev->dev,
 		"Performance stats returned %d stats\n",
 		be32_to_cpu(buff_stats->num_statistics));
-	DBG_EXIT("rc=%lld", rc);
+	DBG_MID("Performance stats successfully fetched");
+	DBG_EXIT("rc=%lld");
 	return 0;
 }
 
@@ -350,7 +358,7 @@ static const char * const nvdimm_events_map[] = {
 
 static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, u64 *count)
 {
-	DBG_ENTRY("event config=%llu", event->attr.config);
+	DBG_ENTRY("event config=%llu");
 	struct papr_scm_perf_stat *stat;
 	struct papr_scm_perf_stats *stats;
 	struct papr_scm_priv *p = dev_get_drvdata(dev);
@@ -385,7 +393,7 @@ static int papr_scm_pmu_get_value(struct perf_event *event, struct device *dev, 
 
 	*count = be64_to_cpu(stat->stat_val);
 	kfree(stats);
-	DBG_EXIT("rc=%d, count=%llu", rc, *count);
+	DBG_EXIT("rc=%d, count=%llu");
 	return 0;
 }
 
@@ -418,13 +426,13 @@ static int papr_scm_pmu_event_init(struct perf_event *event)
 	if (event->attr.config == 0 || event->attr.config > 16)
 		return -EINVAL;
 
-	DBG_EXIT("rc=%d", 0);
+	DBG_EXIT("rc=%d");
 	return 0;
 }
 
 static int papr_scm_pmu_add(struct perf_event *event, int flags)
 {
-	DBG_ENTRY("flags=0x%x", flags);
+	DBG_ENTRY("flags=0x%x");
 	u64 count;
 	int rc;
 	struct nvdimm_pmu *nd_pmu = to_nvdimm_pmu(event->pmu);
@@ -440,7 +448,7 @@ static int papr_scm_pmu_add(struct perf_event *event, int flags)
 		local64_set(&event->hw.prev_count, count);
 	}
 
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return 0;
 }
 
@@ -465,14 +473,14 @@ static void papr_scm_pmu_read(struct perf_event *event)
 
 static void papr_scm_pmu_del(struct perf_event *event, int flags)
 {
-	DBG_ENTRY("flags=0x%x", flags);
+	DBG_ENTRY("flags=0x%x");
 	papr_scm_pmu_read(event);
 	DBG_EXIT("");
 }
 
 static void papr_scm_pmu_register(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x");
 	struct nvdimm_pmu *nd_pmu;
 	int rc, nodeid;
 
@@ -529,7 +537,7 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p) { }
  */
 static int __drc_pmem_query_health(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x");
 	unsigned long ret[PLPAR_HCALL_BUFSIZE];
 	u64 bitmap = 0;
 	long rc;
@@ -558,7 +566,7 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 		"Queried dimm health info. Bitmap:0x%016lx Mask:0x%016lx\n",
 		ret[0], ret[1]);
 
-	DBG_EXIT("rc=%ld", rc);
+	DBG_EXIT("rc=%ld");
 	return 0;
 }
 
@@ -568,7 +576,7 @@ static int __drc_pmem_query_health(struct papr_scm_priv *p)
 /* Query cached health info and if needed call drc_pmem_query_health */
 static int drc_pmem_query_health(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x");
 	unsigned long cache_timeout;
 	int rc;
 
@@ -589,27 +597,28 @@ static int drc_pmem_query_health(struct papr_scm_priv *p)
 		rc = 0;
 
 	mutex_unlock(&p->health_mutex);
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return rc;
 }
 
 static int papr_scm_meta_get(struct papr_scm_priv *p,
 			     struct nd_cmd_get_config_data_hdr *hdr)
 {
-	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu");
 	unsigned long data[PLPAR_HCALL_BUFSIZE];
 	unsigned long offset, data_offset;
 	int len, read;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		DBG_MID("Input range out of bounds: in_offset=%lu, in_length=%lu, metadata_size=%d");
 		return -EINVAL;
+	}
 
 	for (len = hdr->in_length; len; len -= read) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
-
+		DBG_MID("Reading len=%d, data_offset=%lu, offset=%lu");
 		if (len >= 8)
 			read = 8;
 		else if (len >= 4)
@@ -619,9 +628,10 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 		else
 			read = 1;
 
+		DBG_MID("Calling plpar_hcall H_SCM_READ_METADATA, read=%d");
 		ret = plpar_hcall(H_SCM_READ_METADATA, data, p->drc_index,
 				  offset, read);
-
+		DBG_MID("plpar_hcall returned ret=%lld");
 		if (ret == H_PARAMETER) /* bad DRC index */
 			return -ENODEV;
 		if (ret)
@@ -629,17 +639,19 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 
 		switch (read) {
 		case 8:
+			DBG_MID("Copying 8 bytes to out_buf+%lu");
 			*(uint64_t *)(hdr->out_buf + data_offset) = be64_to_cpu(data[0]);
 			break;
 		case 4:
+			DBG_MID("Copying 4 bytes to out_buf+%lu");
 			*(uint32_t *)(hdr->out_buf + data_offset) = be32_to_cpu(data[0] & 0xffffffff);
 			break;
-
 		case 2:
+			DBG_MID("Copying 2 bytes to out_buf+%lu");
 			*(uint16_t *)(hdr->out_buf + data_offset) = be16_to_cpu(data[0] & 0xffff);
 			break;
-
 		case 1:
+			DBG_MID("Copying 1 byte to out_buf+%lu");
 			*(uint8_t *)(hdr->out_buf + data_offset) = (data[0] & 0xff);
 			break;
 		}
@@ -651,7 +663,7 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 static int papr_scm_meta_set(struct papr_scm_priv *p,
 			     struct nd_cmd_set_config_hdr *hdr)
 {
-	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu", p->drc_index, (unsigned long)hdr->in_offset, (unsigned long)hdr->in_length);
+	DBG_ENTRY("drc_index=0x%x, in_offset=%lu, in_length=%lu");
 	unsigned long offset, data_offset;
 	int len, wrote;
 	unsigned long data;
@@ -662,7 +674,6 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 		return -EINVAL;
 
 	for (len = hdr->in_length; len; len -= wrote) {
-
 		data_offset = hdr->in_length - len;
 		offset = hdr->in_offset + data_offset;
 
@@ -706,7 +717,7 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			unsigned int buf_len)
 {
-	DBG_ENTRY("cmd=%u, buf_len=%u", cmd, buf_len);
+	DBG_ENTRY("cmd=%u, buf_len=%u");
 	unsigned long cmd_mask = PAPR_SCM_DIMM_CMD_MASK;
 	struct nd_cmd_pkg *nd_cmd;
 	struct papr_scm_priv *p;
@@ -761,7 +772,7 @@ static int is_cmd_valid(struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 	}
 
 	/* Let the command be further processed */
-	DBG_EXIT("rc=%d", 0);
+	DBG_EXIT("rc=%d");
 	return 0;
 }
 
@@ -808,7 +819,7 @@ static int papr_pdsm_fuel_gauge(struct papr_scm_priv *p,
 
 free_stats:
 	kfree(stats);
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return rc;
 }
 
@@ -820,7 +831,7 @@ static int papr_pdsm_dsc(struct papr_scm_priv *p,
 	payload->health.extension_flags |= PDSM_DIMM_DSC_VALID;
 	payload->health.dimm_dsc = p->dirty_shutdown_counter;
 
-	DBG_EXIT("ret=%lu", (unsigned long)sizeof(struct nd_papr_pdsm_health));
+	DBG_EXIT("ret=%lu");
 	return sizeof(struct nd_papr_pdsm_health);
 }
 
@@ -874,7 +885,7 @@ static int papr_pdsm_health(struct papr_scm_priv *p,
 	rc = sizeof(struct nd_papr_pdsm_health);
 
 out:
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return rc;
 }
 
@@ -926,7 +937,7 @@ static int papr_pdsm_smart_inject(struct papr_scm_priv *p,
 	/* Return the supported flags back to userspace */
 	payload->smart_inject.flags = supported_flags;
 
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return rc;
 }
 
@@ -993,7 +1004,7 @@ static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 				 struct nd_cmd_pkg *pkg)
 {
-	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x", p->drc_index, pkg->nd_command);
+	DBG_ENTRY("drc_index=0x%x, nd_command=0x%x");
 	/* Get the PDSM header and PDSM command */
 	struct nd_pkg_pdsm *pdsm_pkg = (struct nd_pkg_pdsm *)pkg->nd_payload;
 	enum papr_pdsm pdsm = (enum papr_pdsm)pkg->nd_command;
@@ -1049,7 +1060,7 @@ static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 		pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
 	}
 
-	DBG_EXIT("rc=%d", pdsm_pkg->cmd_status);
+	DBG_EXIT("rc=%d");
 	return pdsm_pkg->cmd_status;
 }
 
@@ -1057,7 +1068,7 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 			  struct nvdimm *nvdimm, unsigned int cmd, void *buf,
 			  unsigned int buf_len, int *cmd_rc)
 {
-	DBG_ENTRY("cmd=0x%x, buf_len=%u", cmd, buf_len);
+	DBG_ENTRY("cmd=0x%x, buf_len=%u");
 	struct nd_cmd_get_config_size *get_size_hdr;
 	struct nd_cmd_pkg *call_pkg = NULL;
 	struct papr_scm_priv *p;
@@ -1105,7 +1116,7 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 
 	dev_dbg(&p->pdev->dev, "returned with cmd_rc = %d\n", *cmd_rc);
 
-	DBG_EXIT("rc=%d", *cmd_rc);
+	DBG_EXIT("rc=%d");
 	return 0;
 }
 
@@ -1119,7 +1130,7 @@ static ssize_t health_bitmap_inject_show(struct device *dev,
 
 	ssize_t ret = sprintf(buf, "%#llx\n",
 		       READ_ONCE(p->health_bitmap_inject_mask));
-	DBG_EXIT("ret=%ld", ret);
+	DBG_EXIT("ret=%ld");
 	return ret;
 }
 
@@ -1165,7 +1176,7 @@ static ssize_t perf_stats_show(struct device *dev,
 
 free_stats:
 	kfree(stats);
-	DBG_EXIT("rc=%zd", rc ? rc : (ssize_t)seq_buf_used(&s));
+	DBG_EXIT("rc=%zd");
 	return rc ? rc : (ssize_t)seq_buf_used(&s);
 }
 static DEVICE_ATTR_ADMIN_RO(perf_stats);
@@ -1209,7 +1220,7 @@ static ssize_t flags_show(struct device *dev,
 	if (seq_buf_used(&s))
 		seq_buf_printf(&s, "\n");
 
-	DBG_EXIT("ret=%ld", (long)seq_buf_used(&s));
+	DBG_EXIT("ret=%ld");
 	return seq_buf_used(&s);
 }
 DEVICE_ATTR_RO(flags);
@@ -1222,7 +1233,7 @@ static ssize_t dirty_shutdown_show(struct device *dev,
 	struct papr_scm_priv *p = nvdimm_provider_data(dimm);
 
 	ssize_t ret = sysfs_emit(buf, "%llu\n", p->dirty_shutdown_counter);
-	DBG_EXIT("ret=%ld", ret);
+	DBG_EXIT("ret=%ld");
 	return ret;
 }
 DEVICE_ATTR_RO(dirty_shutdown);
@@ -1239,7 +1250,7 @@ static umode_t papr_nd_attribute_visible(struct kobject *kobj,
 	if (attr == &dev_attr_perf_stats.attr && p->stat_buffer_len == 0)
 		return 0;
 
-	DBG_EXIT("ret=%u", (unsigned)ret);
+	DBG_EXIT("ret=%u");
 	return ret;
 }
 
@@ -1265,7 +1276,7 @@ static const struct attribute_group *papr_nd_attr_groups[] = {
 
 static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 {
-	DBG_ENTRY("drc_index=0x%x", p->drc_index);
+	DBG_ENTRY("drc_index=0x%x");
 	struct device *dev = &p->pdev->dev;
 	struct nd_mapping_desc mapping;
 	struct nd_region_desc ndr_desc;
@@ -1355,7 +1366,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	list_add_tail(&p->region_list, &papr_nd_regions);
 	mutex_unlock(&papr_ndr_lock);
 
-	DBG_EXIT("rc=%d", 0);
+	DBG_EXIT("rc=%d");
 	return 0;
 
 err:	nvdimm_bus_unregister(p->bus);
@@ -1366,7 +1377,7 @@ err:	nvdimm_bus_unregister(p->bus);
 static void papr_scm_add_badblock(struct nd_region *region,
 				  struct nvdimm_bus *bus, u64 phys_addr)
 {
-	DBG_ENTRY("phys_addr=0x%llx", phys_addr);
+	DBG_ENTRY("phys_addr=0x%llx");
 	u64 aligned_addr = ALIGN_DOWN(phys_addr, L1_CACHE_BYTES);
 
 	if (nvdimm_bus_add_badrange(bus, aligned_addr, L1_CACHE_BYTES)) {
@@ -1421,7 +1432,7 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 
 	mutex_unlock(&papr_ndr_lock);
 
-	DBG_EXIT("ret=%d", found ? NOTIFY_OK : NOTIFY_DONE);
+	DBG_EXIT("ret=%d");
 	return found ? NOTIFY_OK : NOTIFY_DONE;
 }
 
@@ -1549,7 +1560,7 @@ static int papr_scm_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, p);
 	papr_scm_pmu_register(p);
 
-	DBG_EXIT("rc=%d", rc);
+	DBG_EXIT("rc=%d");
 	return rc;
 
 err2:	drc_pmem_unbind(p);
@@ -1602,7 +1613,7 @@ static int __init papr_scm_init(void)
 	if (!ret)
 		mce_register_notifier(&mce_ue_nb);
 
-	DBG_EXIT("ret=%d", ret);
+	DBG_EXIT("ret=%d");
 	return ret;
 }
 module_init(papr_scm_init);
