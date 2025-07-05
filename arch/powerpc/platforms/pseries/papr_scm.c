@@ -1433,7 +1433,7 @@ static int handle_mce_ue(struct notifier_block *nb, unsigned long val,
 
 	mutex_unlock(&papr_ndr_lock);
 
-	DBG_EXIT("ret=%d");
+	DBG_EXIT("ret=%d", found ? NOTIFY_OK : NOTIFY_DONE);
 	return found ? NOTIFY_OK : NOTIFY_DONE;
 }
 
