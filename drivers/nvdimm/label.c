@@ -44,18 +44,19 @@ static u32 best_seq(u32 a, u32 b)
 	a &= NSINDEX_SEQ_MASK;
 	b &= NSINDEX_SEQ_MASK;
 
-	if (a == 0 || a == b)
+	if (a == 0 || a == b) {
 		DBG_EXIT("return b=0x%x", b);
 		return b;
-	else if (b == 0)
+	} else if (b == 0) {
 		DBG_EXIT("return a=0x%x", a);
 		return a;
-	else if (nd_inc_seq(a) == b)
+	} else if (nd_inc_seq(a) == b) {
 		DBG_EXIT("return b=0x%x", b);
 		return b;
-	else
+	} else {
 		DBG_EXIT("return a=0x%x", a);
 		return a;
+	}
 }
 
 unsigned sizeof_namespace_label(struct nvdimm_drvdata *ndd)
@@ -105,9 +106,10 @@ size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 	nslot = nvdimm_num_label_slots(ndd);
 	space = ndd->nsarea.config_size - nslot * sizeof_namespace_label(ndd);
 	size = __sizeof_namespace_index(nslot) * 2;
-	if (size <= space && nslot >= 2)
+	if (size <= space && nslot >= 2) {
 		DBG_EXIT("size=%u", size / 2);
 		return size / 2;
+	}
 
 	dev_err(ndd->dev, "label area (%d) too small to host (%d byte) labels\n",
 			ndd->nsarea.config_size, sizeof_namespace_label(ndd));
