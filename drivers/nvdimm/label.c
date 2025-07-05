@@ -12,6 +12,17 @@
 #include "label.h"
 #include "nd.h"
 
+#define DEBUG_TRACE_ENTRY_EXIT 1
+#if DEBUG_TRACE_ENTRY_EXIT
+#define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define DBG_ENTRY(fmt, ...)
+#define DBG_EXIT(fmt, ...)
+#define DBG_MID(fmt, ...)
+#endif
+
 static guid_t nvdimm_btt_guid;
 static guid_t nvdimm_btt2_guid;
 static guid_t nvdimm_pfn_guid;
@@ -29,26 +40,33 @@ static const char NSINDEX_SIGNATURE[] = "NAMESPACE_INDEX\0";
 
 static u32 best_seq(u32 a, u32 b)
 {
+	DBG_ENTRY("a=0x%x, b=0x%x", a, b);
 	a &= NSINDEX_SEQ_MASK;
 	b &= NSINDEX_SEQ_MASK;
 
 	if (a == 0 || a == b)
+		DBG_EXIT("return b=0x%x", b);
 		return b;
 	else if (b == 0)
+		DBG_EXIT("return a=0x%x", a);
 		return a;
 	else if (nd_inc_seq(a) == b)
+		DBG_EXIT("return b=0x%x", b);
 		return b;
 	else
+		DBG_EXIT("return a=0x%x", a);
 		return a;
 }
 
 unsigned sizeof_namespace_label(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	return ndd->nslabel_size;
 }
 
 static size_t __sizeof_namespace_index(u32 nslot)
 {
+	DBG_ENTRY("nslot=%u", nslot);
 	return ALIGN(sizeof(struct nd_namespace_index) + DIV_ROUND_UP(nslot, 8),
 			NSINDEX_ALIGN);
 }
@@ -56,22 +74,26 @@ static size_t __sizeof_namespace_index(u32 nslot)
 static int __nvdimm_num_label_slots(struct nvdimm_drvdata *ndd,
 		size_t index_size)
 {
+	DBG_ENTRY("index_size=%zu", index_size);
 	return (ndd->nsarea.config_size - index_size * 2) /
 			sizeof_namespace_label(ndd);
 }
 
 int nvdimm_num_label_slots(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	u32 tmp_nslot, n;
 
 	tmp_nslot = ndd->nsarea.config_size / sizeof_namespace_label(ndd);
 	n = __sizeof_namespace_index(tmp_nslot) / NSINDEX_ALIGN;
 
+	DBG_EXIT("slots=%d", __nvdimm_num_label_slots(ndd, NSINDEX_ALIGN * n));
 	return __nvdimm_num_label_slots(ndd, NSINDEX_ALIGN * n);
 }
 
 size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	u32 nslot, space, size;
 
 	/*
@@ -84,15 +106,18 @@ size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 	space = ndd->nsarea.config_size - nslot * sizeof_namespace_label(ndd);
 	size = __sizeof_namespace_index(nslot) * 2;
 	if (size <= space && nslot >= 2)
+		DBG_EXIT("size=%u", size / 2);
 		return size / 2;
 
 	dev_err(ndd->dev, "label area (%d) too small to host (%d byte) labels\n",
 			ndd->nsarea.config_size, sizeof_namespace_label(ndd));
+	DBG_EXIT("size=0");
 	return 0;
 }
 
 static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	/*
 	 * On media label format consists of two index blocks followed
 	 * by an array of labels.  None of these structures are ever
@@ -139,6 +164,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		memcpy(sig, nsindex[i]->sig, NSINDEX_SIG_LEN);
 		if (memcmp(sig, NSINDEX_SIGNATURE, NSINDEX_SIG_LEN) != 0) {
 			dev_dbg(dev, "nsindex%d signature invalid\n", i);
+			DBG_MID("nsindex%d signature invalid", i);
 			continue;
 		}
 
@@ -153,6 +179,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		if (labelsize != sizeof_namespace_label(ndd)) {
 			dev_dbg(dev, "nsindex%d labelsize %d invalid\n",
 					i, nsindex[i]->labelsize);
+			DBG_MID("nsindex%d labelsize %d invalid", i, nsindex[i]->labelsize);
 			continue;
 		}
 
@@ -162,12 +189,14 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		nsindex[i]->checksum = __cpu_to_le64(sum_save);
 		if (sum != sum_save) {
 			dev_dbg(dev, "nsindex%d checksum invalid\n", i);
+			DBG_MID("nsindex%d checksum invalid", i);
 			continue;
 		}
 
 		seq = __le32_to_cpu(nsindex[i]->seq);
 		if ((seq & NSINDEX_SEQ_MASK) == 0) {
 			dev_dbg(dev, "nsindex%d sequence: %#x invalid\n", i, seq);
+			DBG_MID("nsindex%d sequence: %#x invalid", i, seq);
 			continue;
 		}
 
@@ -177,6 +206,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 			dev_dbg(dev, "nsindex%d myoff: %#llx invalid\n",
 					i, (unsigned long long)
 					__le64_to_cpu(nsindex[i]->myoff));
+			DBG_MID("nsindex%d myoff: %#llx invalid", i, (unsigned long long)__le64_to_cpu(nsindex[i]->myoff));
 			continue;
 		}
 		if (__le64_to_cpu(nsindex[i]->otheroff)
@@ -184,6 +214,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 			dev_dbg(dev, "nsindex%d otheroff: %#llx invalid\n",
 					i, (unsigned long long)
 					__le64_to_cpu(nsindex[i]->otheroff));
+			DBG_MID("nsindex%d otheroff: %#llx invalid", i, (unsigned long long)__le64_to_cpu(nsindex[i]->otheroff));
 			continue;
 		}
 		if (__le64_to_cpu(nsindex[i]->labeloff)
@@ -191,6 +222,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 			dev_dbg(dev, "nsindex%d labeloff: %#llx invalid\n",
 					i, (unsigned long long)
 					__le64_to_cpu(nsindex[i]->labeloff));
+			DBG_MID("nsindex%d labeloff: %#llx invalid", i, (unsigned long long)__le64_to_cpu(nsindex[i]->labeloff));
 			continue;
 		}
 
@@ -198,6 +230,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		if (size > sizeof_namespace_index(ndd)
 				|| size < sizeof(struct nd_namespace_index)) {
 			dev_dbg(dev, "nsindex%d mysize: %#llx invalid\n", i, size);
+			DBG_MID("nsindex%d mysize: %#llx invalid", i, size);
 			continue;
 		}
 
@@ -207,6 +240,7 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 				> ndd->nsarea.config_size) {
 			dev_dbg(dev, "nsindex%d nslot: %u invalid, config_size: %#x\n",
 					i, nslot, ndd->nsarea.config_size);
+			DBG_MID("nsindex%d nslot: %u invalid, config_size: %#x", i, nslot, ndd->nsarea.config_size);
 			continue;
 		}
 		valid[i] = true;
@@ -215,10 +249,12 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 
 	switch (num_valid) {
 	case 0:
+		DBG_EXIT("no valid index");
 		break;
 	case 1:
 		for (i = 0; i < num_index; i++)
 			if (valid[i])
+				DBG_EXIT("return %d", i);
 				return i;
 		/* can't have num_valid > 0 but valid[] = { false, false } */
 		WARN_ON(1);
@@ -228,17 +264,21 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		seq = best_seq(__le32_to_cpu(nsindex[0]->seq),
 				__le32_to_cpu(nsindex[1]->seq));
 		if (seq == (__le32_to_cpu(nsindex[1]->seq) & NSINDEX_SEQ_MASK))
+			DBG_EXIT("return 1");
 			return 1;
 		else
+			DBG_EXIT("return 0");
 			return 0;
 		break;
 	}
 
+	DBG_EXIT("return -1");
 	return -1;
 }
 
 static int nd_label_validate(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	/*
 	 * In order to probe for and validate namespace index blocks we
 	 * need to know the size of the labels, and we can't trust the
@@ -254,9 +294,11 @@ static int nd_label_validate(struct nvdimm_drvdata *ndd)
 		ndd->nslabel_size = label_size[i];
 		rc = __nd_label_validate(ndd);
 		if (rc >= 0)
+			DBG_EXIT("success, rc=%d", rc);
 			return rc;
 	}
 
+	DBG_EXIT("return -1");
 	return -1;
 }
 
@@ -433,6 +475,7 @@ int nd_label_reserve_dpa(struct nvdimm_drvdata *ndd)
 
 int nd_label_data_init(struct nvdimm_drvdata *ndd)
 {
+	DBG_ENTRY("");
 	size_t config_size, read_size, max_xfer, offset;
 	struct nd_namespace_index *nsindex;
 	unsigned int i;
@@ -440,12 +483,14 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	u32 nslot;
 
 	if (ndd->data)
+		DBG_EXIT("already initialized");
 		return 0;
 
 	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0 ||
 	    ndd->nsarea.config_size == 0) {
 		dev_dbg(ndd->dev, "failed to init config data area: (%u:%u)\n",
 			ndd->nsarea.max_xfer, ndd->nsarea.config_size);
+		DBG_EXIT("invalid nsarea");
 		return -ENXIO;
 	}
 
@@ -462,12 +507,14 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	ndd->nslabel_size = 128;
 	read_size = sizeof_namespace_index(ndd) * 2;
 	if (!read_size)
+		DBG_EXIT("read_size=0");
 		return -ENXIO;
 
 	/* Allocate config data */
 	config_size = ndd->nsarea.config_size;
 	ndd->data = kvzalloc(config_size, GFP_KERNEL);
 	if (!ndd->data)
+		DBG_EXIT("kvzalloc failed");
 		return -ENOMEM;
 
 	/*
@@ -494,11 +541,13 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	/* Read the index data */
 	rc = nvdimm_get_config_data(ndd, ndd->data, 0, read_size);
 	if (rc)
+		DBG_EXIT("nvdimm_get_config_data failed, rc=%d", rc);
 		goto out_err;
 
 	/* Validate index data, if not valid assume all labels are invalid */
 	ndd->ns_current = nd_label_validate(ndd);
 	if (ndd->ns_current < 0)
+		DBG_EXIT("no valid index");
 		return 0;
 
 	/* Record our index values */
@@ -543,6 +592,7 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 		rc = nvdimm_get_config_data(ndd, ndd->data + read_size,
 					    read_size, label_read_size);
 		if (rc)
+			DBG_EXIT("nvdimm_get_config_data label failed, rc=%d", rc);
 			goto out_err;
 
 		/* push read_size to next read offset */
@@ -550,6 +600,7 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	}
 
 	dev_dbg(ndd->dev, "len: %zu rc: %d\n", offset, rc);
+	DBG_EXIT("rc=%d", rc);
 out_err:
 	return rc;
 }

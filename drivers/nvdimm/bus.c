@@ -23,6 +23,17 @@
 #include "nd.h"
 #include "pfn.h"
 
+#define DEBUG_TRACE_ENTRY_EXIT 1
+#if DEBUG_TRACE_ENTRY_EXIT
+#define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define DBG_ENTRY(fmt, ...)
+#define DBG_EXIT(fmt, ...)
+#define DBG_MID(fmt, ...)
+#endif
+
 int nvdimm_major;
 static int nvdimm_bus_major;
 static DEFINE_IDA(nd_ida);
@@ -33,58 +44,75 @@ static const struct class nd_class = {
 
 static int to_nd_device_type(const struct device *dev)
 {
+	DBG_ENTRY("");
 	if (is_nvdimm(dev))
+		DBG_EXIT("ND_DEVICE_DIMM");
 		return ND_DEVICE_DIMM;
 	else if (is_memory(dev))
+		DBG_EXIT("ND_DEVICE_REGION_PMEM");
 		return ND_DEVICE_REGION_PMEM;
 	else if (is_nd_dax(dev))
+		DBG_EXIT("ND_DEVICE_DAX_PMEM");
 		return ND_DEVICE_DAX_PMEM;
 	else if (is_nd_region(dev->parent))
+		DBG_EXIT("nd_region_to_nstype");
 		return nd_region_to_nstype(to_nd_region(dev->parent));
 
+	DBG_EXIT("return 0");
 	return 0;
 }
 
 static int nvdimm_bus_uevent(const struct device *dev, struct kobj_uevent_env *env)
 {
-	return add_uevent_var(env, "MODALIAS=" ND_DEVICE_MODALIAS_FMT,
+	DBG_ENTRY("");
+	int ret = add_uevent_var(env, "MODALIAS=" ND_DEVICE_MODALIAS_FMT,
 			to_nd_device_type(dev));
+	DBG_EXIT("ret=%d", ret);
+	return ret;
 }
 
 static struct module *to_bus_provider(struct device *dev)
 {
+	DBG_ENTRY("");
 	/* pin bus providers while regions are enabled */
 	if (is_nd_region(dev)) {
 		struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
-
+		DBG_EXIT("module=%p", nvdimm_bus->nd_desc->module);
 		return nvdimm_bus->nd_desc->module;
 	}
+	DBG_EXIT("NULL");
 	return NULL;
 }
 
 static void nvdimm_bus_probe_start(struct nvdimm_bus *nvdimm_bus)
 {
+	DBG_ENTRY("");
 	nvdimm_bus_lock(&nvdimm_bus->dev);
 	nvdimm_bus->probe_active++;
 	nvdimm_bus_unlock(&nvdimm_bus->dev);
+	DBG_EXIT("");
 }
 
 static void nvdimm_bus_probe_end(struct nvdimm_bus *nvdimm_bus)
 {
+	DBG_ENTRY("");
 	nvdimm_bus_lock(&nvdimm_bus->dev);
 	if (--nvdimm_bus->probe_active == 0)
 		wake_up(&nvdimm_bus->wait);
 	nvdimm_bus_unlock(&nvdimm_bus->dev);
+	DBG_EXIT("");
 }
 
 static int nvdimm_bus_probe(struct device *dev)
 {
+	DBG_ENTRY("");
 	struct nd_device_driver *nd_drv = to_nd_device_driver(dev->driver);
 	struct module *provider = to_bus_provider(dev);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	int rc;
 
 	if (!try_module_get(provider))
+		DBG_EXIT("try_module_get failed");
 		return -ENXIO;
 
 	dev_dbg(&nvdimm_bus->dev, "START: %s.probe(%s)\n",
@@ -102,11 +130,13 @@ static int nvdimm_bus_probe(struct device *dev)
 
 	if (rc != 0)
 		module_put(provider);
+	DBG_EXIT("rc=%d", rc);
 	return rc;
 }
 
 static void nvdimm_bus_remove(struct device *dev)
 {
+	DBG_ENTRY("");
 	struct nd_device_driver *nd_drv = to_nd_device_driver(dev->driver);
 	struct module *provider = to_bus_provider(dev);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
@@ -117,10 +147,12 @@ static void nvdimm_bus_remove(struct device *dev)
 	dev_dbg(&nvdimm_bus->dev, "%s.remove(%s)\n", dev->driver->name,
 			dev_name(dev));
 	module_put(provider);
+	DBG_EXIT("");
 }
 
 static void nvdimm_bus_shutdown(struct device *dev)
 {
+	DBG_ENTRY("");
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nd_device_driver *nd_drv = NULL;
 
@@ -132,10 +164,12 @@ static void nvdimm_bus_shutdown(struct device *dev)
 		dev_dbg(&nvdimm_bus->dev, "%s.shutdown(%s)\n",
 				dev->driver->name, dev_name(dev));
 	}
+	DBG_EXIT("");
 }
 
 void nd_device_notify(struct device *dev, enum nvdimm_event event)
 {
+	DBG_ENTRY("event=%d", event);
 	device_lock(dev);
 	if (dev->driver) {
 		struct nd_device_driver *nd_drv;
@@ -145,18 +179,22 @@ void nd_device_notify(struct device *dev, enum nvdimm_event event)
 			nd_drv->notify(dev, event);
 	}
 	device_unlock(dev);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL(nd_device_notify);
 
 void nvdimm_region_notify(struct nd_region *nd_region, enum nvdimm_event event)
 {
+	DBG_ENTRY("event=%d", event);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(&nd_region->dev);
 
 	if (!nvdimm_bus)
+		DBG_EXIT("no nvdimm_bus");
 		return;
 
 	/* caller is responsible for holding a reference on the device */
 	nd_device_notify(&nd_region->dev, event);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL_GPL(nvdimm_region_notify);
 
@@ -166,6 +204,7 @@ struct clear_badblocks_context {
 
 static int nvdimm_clear_badblocks_region(struct device *dev, void *data)
 {
+	DBG_ENTRY("");
 	struct clear_badblocks_context *ctx = data;
 	struct nd_region *nd_region;
 	resource_size_t ndr_end;
@@ -173,6 +212,7 @@ static int nvdimm_clear_badblocks_region(struct device *dev, void *data)
 
 	/* make sure device is a region */
 	if (!is_memory(dev))
+		DBG_EXIT("not a memory device");
 		return 0;
 
 	nd_region = to_nd_region(dev);
@@ -181,6 +221,7 @@ static int nvdimm_clear_badblocks_region(struct device *dev, void *data)
 	/* make sure we are in the region */
 	if (ctx->phys < nd_region->ndr_start ||
 	    (ctx->phys + ctx->cleared - 1) > ndr_end)
+		DBG_EXIT("not in region");
 		return 0;
 
 	sector = (ctx->phys - nd_region->ndr_start) / 512;
@@ -189,12 +230,14 @@ static int nvdimm_clear_badblocks_region(struct device *dev, void *data)
 	if (nd_region->bb_state)
 		sysfs_notify_dirent(nd_region->bb_state);
 
+	DBG_EXIT("");
 	return 0;
 }
 
 static void nvdimm_clear_badblocks_regions(struct nvdimm_bus *nvdimm_bus,
 		phys_addr_t phys, u64 cleared)
 {
+	DBG_ENTRY("phys=0x%llx, cleared=0x%llx", phys, cleared);
 	struct clear_badblocks_context ctx = {
 		.phys = phys,
 		.cleared = cleared,
@@ -202,21 +245,25 @@ static void nvdimm_clear_badblocks_regions(struct nvdimm_bus *nvdimm_bus,
 
 	device_for_each_child(&nvdimm_bus->dev, &ctx,
 			nvdimm_clear_badblocks_region);
+	DBG_EXIT("");
 }
 
 static void nvdimm_account_cleared_poison(struct nvdimm_bus *nvdimm_bus,
 		phys_addr_t phys, u64 cleared)
 {
+	DBG_ENTRY("phys=0x%llx, cleared=0x%llx", phys, cleared);
 	if (cleared > 0)
 		badrange_forget(&nvdimm_bus->badrange, phys, cleared);
 
 	if (cleared > 0 && cleared / 512)
 		nvdimm_clear_badblocks_regions(nvdimm_bus, phys, cleared);
+	DBG_EXIT("");
 }
 
 long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 		unsigned int len)
 {
+	DBG_ENTRY("phys=0x%llx, len=%u", phys, len);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc;
 	struct nd_cmd_clear_error clear_err;
@@ -226,6 +273,7 @@ long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 	int cmd_rc, rc;
 
 	if (!nvdimm_bus)
+		DBG_EXIT("no nvdimm_bus");
 		return -ENXIO;
 
 	nd_desc = nvdimm_bus->nd_desc;
@@ -234,6 +282,7 @@ long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 	 * we want to just pretend everything is handled.
 	 */
 	if (!nd_desc->ndctl)
+		DBG_EXIT("no ndctl, legacy PMEM");
 		return len;
 
 	memset(&ars_cap, 0, sizeof(ars_cap));
@@ -244,15 +293,19 @@ long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 			sizeof(ars_cap), &cmd_rc);
 	memalloc_noio_restore(noio_flag);
 	if (rc < 0)
+		DBG_EXIT("ars_cap failed, rc=%d", rc);
 		return rc;
 	if (cmd_rc < 0)
+		DBG_EXIT("ars_cap cmd_rc failed, cmd_rc=%d", cmd_rc);
 		return cmd_rc;
 	clear_err_unit = ars_cap.clear_err_unit;
 	if (!clear_err_unit || !is_power_of_2(clear_err_unit))
+		DBG_EXIT("bad clear_err_unit");
 		return -ENXIO;
 
 	mask = clear_err_unit - 1;
 	if ((phys | len) & mask)
+		DBG_EXIT("unaligned");
 		return -ENXIO;
 	memset(&clear_err, 0, sizeof(clear_err));
 	clear_err.address = phys;
@@ -262,12 +315,15 @@ long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
 			sizeof(clear_err), &cmd_rc);
 	memalloc_noio_restore(noio_flag);
 	if (rc < 0)
+		DBG_EXIT("clear_error failed, rc=%d", rc);
 		return rc;
 	if (cmd_rc < 0)
+		DBG_EXIT("clear_error cmd_rc failed, cmd_rc=%d", cmd_rc);
 		return cmd_rc;
 
 	nvdimm_account_cleared_poison(nvdimm_bus, phys, clear_err.cleared);
 
+	DBG_EXIT("cleared=%llu", clear_err.cleared);
 	return clear_err.cleared;
 }
 EXPORT_SYMBOL_GPL(nvdimm_clear_poison);
@@ -299,11 +355,15 @@ static const struct device_type nvdimm_bus_dev_type = {
 
 bool is_nvdimm_bus(struct device *dev)
 {
-	return dev->type == &nvdimm_bus_dev_type;
+	DBG_ENTRY("");
+	bool ret = dev->type == &nvdimm_bus_dev_type;
+	DBG_EXIT("ret=%d", ret);
+	return ret;
 }
 
 struct nvdimm_bus *walk_to_nvdimm_bus(struct device *nd_dev)
 {
+	DBG_ENTRY("nd_dev=%p", nd_dev);
 	struct device *dev;
 
 	for (dev = nd_dev; dev; dev = dev->parent)
@@ -311,23 +371,30 @@ struct nvdimm_bus *walk_to_nvdimm_bus(struct device *nd_dev)
 			break;
 	dev_WARN_ONCE(nd_dev, !dev, "invalid dev, not on nd bus\n");
 	if (dev)
+		DBG_EXIT("found nvdimm_bus=%p", to_nvdimm_bus(dev));
 		return to_nvdimm_bus(dev);
+	DBG_EXIT("NULL");
 	return NULL;
 }
 
 struct nvdimm_bus *to_nvdimm_bus(struct device *dev)
 {
+	DBG_ENTRY("dev=%p", dev);
 	struct nvdimm_bus *nvdimm_bus;
 
 	nvdimm_bus = container_of(dev, struct nvdimm_bus, dev);
 	WARN_ON(!is_nvdimm_bus(dev));
+	DBG_EXIT("nvdimm_bus=%p", nvdimm_bus);
 	return nvdimm_bus;
 }
 EXPORT_SYMBOL_GPL(to_nvdimm_bus);
 
 struct nvdimm_bus *nvdimm_to_bus(struct nvdimm *nvdimm)
 {
-	return to_nvdimm_bus(nvdimm->dev.parent);
+	DBG_ENTRY("nvdimm=%p");
+	struct nvdimm_bus *bus = to_nvdimm_bus(nvdimm->dev.parent);
+	DBG_EXIT("bus=%p");
+	return bus;
 }
 EXPORT_SYMBOL_GPL(nvdimm_to_bus);
 
@@ -336,11 +403,13 @@ static struct lock_class_key nvdimm_bus_key;
 struct nvdimm_bus *nvdimm_bus_register(struct device *parent,
 		struct nvdimm_bus_descriptor *nd_desc)
 {
+	DBG_ENTRY("parent=%p, nd_desc=%p", parent, nd_desc);
 	struct nvdimm_bus *nvdimm_bus;
 	int rc;
 
 	nvdimm_bus = kzalloc(sizeof(*nvdimm_bus), GFP_KERNEL);
 	if (!nvdimm_bus)
+		DBG_EXIT("kzalloc failed");
 		return NULL;
 	INIT_LIST_HEAD(&nvdimm_bus->list);
 	INIT_LIST_HEAD(&nvdimm_bus->mapping_list);
@@ -348,6 +417,7 @@ struct nvdimm_bus *nvdimm_bus_register(struct device *parent,
 	nvdimm_bus->id = ida_alloc(&nd_ida, GFP_KERNEL);
 	if (nvdimm_bus->id < 0) {
 		kfree(nvdimm_bus);
+		DBG_EXIT("ida_alloc failed");
 		return NULL;
 	}
 	mutex_init(&nvdimm_bus->reconfig_mutex);
@@ -370,24 +440,29 @@ struct nvdimm_bus *nvdimm_bus_register(struct device *parent,
 		dev_dbg(&nvdimm_bus->dev, "registration failed: %d\n", rc);
 		goto err;
 	}
-
+	DBG_EXIT("nvdimm_bus=%p", nvdimm_bus);
 	return nvdimm_bus;
  err:
 	put_device(&nvdimm_bus->dev);
+	DBG_EXIT("error path");
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(nvdimm_bus_register);
 
 void nvdimm_bus_unregister(struct nvdimm_bus *nvdimm_bus)
 {
+	DBG_ENTRY("nvdimm_bus=%p", nvdimm_bus);
 	if (!nvdimm_bus)
+		DBG_EXIT("NULL");
 		return;
 	device_unregister(&nvdimm_bus->dev);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL_GPL(nvdimm_bus_unregister);
 
 static int child_unregister(struct device *dev, void *data)
 {
+	DBG_ENTRY("dev=%p", dev);
 	/*
 	 * the singular ndctl class device per bus needs to be
 	 * "device_destroy"ed, so skip it here
@@ -395,6 +470,7 @@ static int child_unregister(struct device *dev, void *data)
 	 * i.e. remove classless children
 	 */
 	if (dev->class)
+		DBG_EXIT("class device, skipping");
 		return 0;
 
 	if (is_nvdimm(dev))
@@ -402,11 +478,13 @@ static int child_unregister(struct device *dev, void *data)
 	else
 		nd_device_unregister(dev, ND_SYNC);
 
+	DBG_EXIT("");
 	return 0;
 }
 
 static void free_badrange_list(struct list_head *badrange_list)
 {
+	DBG_ENTRY("");
 	struct badrange_entry *bre, *next;
 
 	list_for_each_entry_safe(bre, next, badrange_list, list) {
@@ -414,10 +492,12 @@ static void free_badrange_list(struct list_head *badrange_list)
 		kfree(bre);
 	}
 	list_del_init(badrange_list);
+	DBG_EXIT("");
 }
 
 static void nd_bus_remove(struct device *dev)
 {
+	DBG_ENTRY("");
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 
 	mutex_lock(&nvdimm_bus_list_mutex);
@@ -435,15 +515,18 @@ static void nd_bus_remove(struct device *dev)
 	spin_unlock(&nvdimm_bus->badrange.lock);
 
 	nvdimm_bus_destroy_ndctl(nvdimm_bus);
+	DBG_EXIT("");
 }
 
 static int nd_bus_probe(struct device *dev)
 {
+	DBG_ENTRY("dev=%p", dev);
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 	int rc;
 
 	rc = nvdimm_bus_create_ndctl(nvdimm_bus);
 	if (rc)
+		DBG_EXIT("nvdimm_bus_create_ndctl failed, rc=%d", rc);
 		return rc;
 
 	mutex_lock(&nvdimm_bus_list_mutex);
@@ -452,7 +535,7 @@ static int nd_bus_probe(struct device *dev)
 
 	/* enable bus provider attributes to look up their local context */
 	dev_set_drvdata(dev, nvdimm_bus->nd_desc);
-
+	DBG_EXIT("success");
 	return 0;
 }
 
@@ -482,12 +565,15 @@ static ASYNC_DOMAIN_EXCLUSIVE(nd_async_domain);
 
 void nd_synchronize(void)
 {
+	DBG_ENTRY("");
 	async_synchronize_full_domain(&nd_async_domain);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL_GPL(nd_synchronize);
 
 static void nd_async_device_register(void *d, async_cookie_t cookie)
 {
+	DBG_ENTRY("");
 	struct device *dev = d;
 
 	if (device_add(dev) != 0) {
@@ -497,10 +583,12 @@ static void nd_async_device_register(void *d, async_cookie_t cookie)
 	put_device(dev);
 	if (dev->parent)
 		put_device(dev->parent);
+	DBG_EXIT("");
 }
 
 static void nd_async_device_unregister(void *d, async_cookie_t cookie)
 {
+	DBG_ENTRY("");
 	struct device *dev = d;
 
 	/* flush bus operations before delete */
@@ -509,11 +597,14 @@ static void nd_async_device_unregister(void *d, async_cookie_t cookie)
 
 	device_unregister(dev);
 	put_device(dev);
+	DBG_EXIT("");
 }
 
 static void __nd_device_register(struct device *dev, bool sync)
 {
+	DBG_ENTRY("dev=%p, sync=%d", dev, sync);
 	if (!dev)
+		DBG_EXIT("NULL dev");
 		return;
 
 	/*
@@ -538,22 +629,28 @@ static void __nd_device_register(struct device *dev, bool sync)
 		nd_async_device_register(dev, 0);
 	else
 		async_schedule_dev_domain(nd_async_device_register, dev,
-					  &nd_async_domain);
+				  &nd_async_domain);
+	DBG_EXIT("");
 }
 
 void nd_device_register(struct device *dev)
 {
+	DBG_ENTRY("dev=%p", dev);
 	__nd_device_register(dev, false);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL(nd_device_register);
 
 void nd_device_register_sync(struct device *dev)
 {
+	DBG_ENTRY("dev=%p", dev);
 	__nd_device_register(dev, true);
+	DBG_EXIT("");
 }
 
 void nd_device_unregister(struct device *dev, enum nd_async_mode mode)
 {
+	DBG_ENTRY("dev=%p, mode=%d", dev, mode);
 	bool killed;
 
 	switch (mode) {
@@ -565,6 +662,7 @@ void nd_device_unregister(struct device *dev, enum nd_async_mode mode)
 		 * race to schedule the deletion.
 		 */
 		if (!kill_device(dev))
+			DBG_EXIT("kill_device returned false");
 			return;
 
 		get_device(dev);
@@ -584,12 +682,14 @@ void nd_device_unregister(struct device *dev, enum nd_async_mode mode)
 		device_unlock(dev);
 
 		if (!killed)
+			DBG_EXIT("kill_device returned false");
 			return;
 
 		nd_synchronize();
 		device_unregister(dev);
 		break;
 	}
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL(nd_device_unregister);
 
@@ -602,16 +702,19 @@ EXPORT_SYMBOL(nd_device_unregister);
 int __nd_driver_register(struct nd_device_driver *nd_drv, struct module *owner,
 		const char *mod_name)
 {
+	DBG_ENTRY("nd_drv=%p, owner=%p, mod_name=%s", nd_drv, owner, mod_name);
 	struct device_driver *drv = &nd_drv->drv;
 
 	if (!nd_drv->type) {
 		pr_debug("driver type bitmask not set (%ps)\n",
 				__builtin_return_address(0));
+		DBG_EXIT("type bitmask not set");
 		return -EINVAL;
 	}
 
 	if (!nd_drv->probe) {
 		pr_debug("%s ->probe() must be specified\n", mod_name);
+		DBG_EXIT("probe not set");
 		return -EINVAL;
 	}
 
@@ -619,24 +722,28 @@ int __nd_driver_register(struct nd_device_driver *nd_drv, struct module *owner,
 	drv->owner = owner;
 	drv->mod_name = mod_name;
 
+	DBG_EXIT("calling driver_register");
 	return driver_register(drv);
 }
 EXPORT_SYMBOL(__nd_driver_register);
 
 void nvdimm_check_and_set_ro(struct gendisk *disk)
 {
+	DBG_ENTRY("disk=%p", disk);
 	struct device *dev = disk_to_dev(disk)->parent;
 	struct nd_region *nd_region = to_nd_region(dev->parent);
 	int disk_ro = get_disk_ro(disk);
 
 	/* catch the disk up with the region ro state */
 	if (disk_ro == nd_region->ro)
+		DBG_EXIT("already matches");
 		return;
 
 	dev_info(dev, "%s read-%s, marking %s read-%s\n",
 		 dev_name(&nd_region->dev), nd_region->ro ? "only" : "write",
 		 disk->disk_name, nd_region->ro ? "only" : "write");
 	set_disk_ro(disk, nd_region->ro);
+	DBG_EXIT("");
 }
 EXPORT_SYMBOL(nvdimm_check_and_set_ro);
 
@@ -1307,30 +1414,37 @@ static const struct file_operations nvdimm_fops = {
 
 int __init nvdimm_bus_init(void)
 {
+	DBG_ENTRY("");
 	int rc;
 
 	rc = bus_register(&nvdimm_bus_type);
 	if (rc)
+		DBG_EXIT("bus_register failed, rc=%d", rc);
 		return rc;
 
 	rc = register_chrdev(0, "ndctl", &nvdimm_bus_fops);
 	if (rc < 0)
+		DBG_EXIT("register_chrdev ndctl failed, rc=%d", rc);
 		goto err_bus_chrdev;
 	nvdimm_bus_major = rc;
 
 	rc = register_chrdev(0, "dimmctl", &nvdimm_fops);
 	if (rc < 0)
+		DBG_EXIT("register_chrdev dimmctl failed, rc=%d", rc);
 		goto err_dimm_chrdev;
 	nvdimm_major = rc;
 
 	rc = class_register(&nd_class);
 	if (rc)
+		DBG_EXIT("class_register failed, rc=%d", rc);
 		goto err_class;
 
 	rc = driver_register(&nd_bus_driver.drv);
 	if (rc)
+		DBG_EXIT("driver_register failed, rc=%d", rc);
 		goto err_nd_bus;
 
+	DBG_EXIT("success");
 	return 0;
 
  err_nd_bus:
@@ -1342,15 +1456,18 @@ int __init nvdimm_bus_init(void)
  err_bus_chrdev:
 	bus_unregister(&nvdimm_bus_type);
 
+	DBG_EXIT("error path");
 	return rc;
 }
 
 void nvdimm_bus_exit(void)
 {
+	DBG_ENTRY("");
 	driver_unregister(&nd_bus_driver.drv);
 	class_unregister(&nd_class);
 	unregister_chrdev(nvdimm_bus_major, "ndctl");
 	unregister_chrdev(nvdimm_major, "dimmctl");
 	bus_unregister(&nvdimm_bus_type);
 	ida_destroy(&nd_ida);
+	DBG_EXIT("");
 }
