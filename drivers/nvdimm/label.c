@@ -254,10 +254,12 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		DBG_EXIT("no valid index");
 		break;
 	case 1:
-		for (i = 0; i < num_index; i++)
-			if (valid[i])
+		for (i = 0; i < num_index; i++) {
+			if (valid[i]) {
 				DBG_EXIT("return %d", i);
 				return i;
+			}
+		}
 		/* can't have num_valid > 0 but valid[] = { false, false } */
 		WARN_ON(1);
 		break;
@@ -265,12 +267,13 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		/* pick the best index... */
 		seq = best_seq(__le32_to_cpu(nsindex[0]->seq),
 				__le32_to_cpu(nsindex[1]->seq));
-		if (seq == (__le32_to_cpu(nsindex[1]->seq) & NSINDEX_SEQ_MASK))
+		if (seq == (__le32_to_cpu(nsindex[1]->seq) & NSINDEX_SEQ_MASK)) {
 			DBG_EXIT("return 1");
 			return 1;
-		else
+		} else {
 			DBG_EXIT("return 0");
 			return 0;
+		}
 		break;
 	}
 
@@ -295,9 +298,10 @@ static int nd_label_validate(struct nvdimm_drvdata *ndd)
 	for (i = 0; i < ARRAY_SIZE(label_size); i++) {
 		ndd->nslabel_size = label_size[i];
 		rc = __nd_label_validate(ndd);
-		if (rc >= 0)
+		if (rc >= 0) {
 			DBG_EXIT("success, rc=%d", rc);
 			return rc;
+		}
 	}
 
 	DBG_EXIT("return -1");
