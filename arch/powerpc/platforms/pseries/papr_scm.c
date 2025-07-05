@@ -32,18 +32,11 @@
 	 (1ul << ND_CMD_CALL))
 
 // Debug macros for tracing
-#ifndef DBG_ENTRY
-#define DEBUG_TRACE_ENTRY_EXIT 1
-#if DEBUG_TRACE_ENTRY_EXIT
+
 #define DBG_ENTRY(fmt, ...) pr_debug("%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
 #define DBG_EXIT(fmt, ...) pr_debug("%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
 #define DBG_MID(fmt, ...) pr_debug("%s: " fmt "\n", __func__, ##__VA_ARGS__)
-#else
-#define DBG_ENTRY(fmt, ...)
-#define DBG_EXIT(fmt, ...)
-#define DBG_MID(fmt, ...)
-#endif
-#endif
+
 
 /* Struct holding a single performance metric */
 struct papr_scm_perf_stat {
