@@ -28,21 +28,19 @@ static struct device_node *pmem_node;
 
 static ssize_t pmem_drc_add_node(u32 drc_index)
 {
+	printk(KERN_INFO "%s: ENTRY: drc_index=0x%x\n", __func__, drc_index);
 	struct device_node *dn;
 	int rc;
 
-	pr_debug("Attempting to add pmem node, drc index: %x\n", drc_index);
-
 	rc = dlpar_acquire_drc(drc_index);
 	if (rc) {
-		pr_err("Failed to acquire DRC, rc: %d, drc index: %x\n",
-			rc, drc_index);
+		printk(KERN_INFO "%s: EXIT: failed to acquire DRC rc=%d\n", __func__, rc);
 		return -EINVAL;
 	}
 
 	dn = dlpar_configure_connector(cpu_to_be32(drc_index), pmem_node);
 	if (!dn) {
-		pr_err("configure-connector failed for drc %x\n", drc_index);
+		printk(KERN_INFO "%s: EXIT: configure-connector failed\n", __func__);
 		dlpar_release_drc(drc_index);
 		return -EINVAL;
 	}
@@ -50,22 +48,19 @@ static ssize_t pmem_drc_add_node(u32 drc_index)
 	/* NB: The of reconfig notifier creates platform device from the node */
 	rc = dlpar_attach_node(dn, pmem_node);
 	if (rc) {
-		pr_err("Failed to attach node %pOF, rc: %d, drc index: %x\n",
-			dn, rc, drc_index);
-
+		printk(KERN_INFO "%s: EXIT: failed to attach node rc=%d\n", __func__, rc);
 		if (dlpar_release_drc(drc_index))
 			dlpar_free_cc_nodes(dn);
-
 		return rc;
 	}
 
-	pr_info("Successfully added %pOF, drc index: %x\n", dn, drc_index);
-
+	printk(KERN_INFO "%s: EXIT: success dn=%p drc_index=0x%x\n", __func__, dn, drc_index);
 	return 0;
 }
 
 static ssize_t pmem_drc_remove_node(u32 drc_index)
 {
+	printk(KERN_INFO "%s: ENTRY: drc_index=0x%x\n", __func__, drc_index);
 	struct device_node *dn;
 	uint32_t index;
 	int rc;
@@ -78,7 +73,7 @@ static ssize_t pmem_drc_remove_node(u32 drc_index)
 	}
 
 	if (!dn) {
-		pr_err("Attempting to remove unused DRC index %x\n", drc_index);
+		printk(KERN_INFO "%s: EXIT: node not found\n", __func__);
 		return -ENODEV;
 	}
 
@@ -86,24 +81,25 @@ static ssize_t pmem_drc_remove_node(u32 drc_index)
 
 	/* * NB: tears down the ibm,pmemory device as a side-effect */
 	rc = dlpar_detach_node(dn);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: detach_node failed rc=%d\n", __func__, rc);
 		return rc;
+	}
 
 	rc = dlpar_release_drc(drc_index);
 	if (rc) {
-		pr_err("Failed to release drc (%x) for CPU %pOFn, rc: %d\n",
-			drc_index, dn, rc);
+		printk(KERN_INFO "%s: EXIT: release_drc failed rc=%d\n", __func__, rc);
 		dlpar_attach_node(dn, pmem_node);
 		return rc;
 	}
 
-	pr_info("Successfully removed PMEM with drc index: %x\n", drc_index);
-
+	printk(KERN_INFO "%s: EXIT: success drc_index=0x%x\n", __func__, drc_index);
 	return 0;
 }
 
 int dlpar_hp_pmem(struct pseries_hp_errorlog *hp_elog)
 {
+	printk(KERN_INFO "%s: ENTRY: hp_elog=%p\n", __func__, hp_elog);
 	u32 drc_index;
 	int rc;
 
@@ -111,13 +107,12 @@ int dlpar_hp_pmem(struct pseries_hp_errorlog *hp_elog)
 	if (!pmem_node)
 		pmem_node = of_find_node_by_type(NULL, "ibm,persistent-memory");
 	if (!pmem_node) {
-		pr_err("Hotplug event for a pmem device, but none exists\n");
+		printk(KERN_INFO "%s: EXIT: pmem_node not found\n", __func__);
 		return -ENODEV;
 	}
 
 	if (hp_elog->id_type != PSERIES_HP_ELOG_ID_DRC_INDEX) {
-		pr_err("Unsupported hotplug event type %d\n",
-				hp_elog->id_type);
+		printk(KERN_INFO "%s: EXIT: unsupported id_type=%d\n", __func__, hp_elog->id_type);
 		return -EINVAL;
 	}
 
@@ -130,11 +125,12 @@ int dlpar_hp_pmem(struct pseries_hp_errorlog *hp_elog)
 	} else if (hp_elog->action == PSERIES_HP_ELOG_ACTION_REMOVE) {
 		rc = pmem_drc_remove_node(drc_index);
 	} else {
-		pr_err("Unsupported hotplug action (%d)\n", hp_elog->action);
+		printk(KERN_INFO "%s: EXIT: unsupported action=%d\n", __func__, hp_elog->action);
 		rc = -EINVAL;
 	}
 
 	unlock_device_hotplug();
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
@@ -145,15 +141,20 @@ static const struct of_device_id drc_pmem_match[] = {
 
 static int pseries_pmem_init(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	/*
 	 * Only supported on POWER8 and above.
 	 */
-	if (!cpu_has_feature(CPU_FTR_ARCH_207S))
+	if (!cpu_has_feature(CPU_FTR_ARCH_207S)) {
+		printk(KERN_INFO "%s: EXIT: unsupported CPU\n", __func__);
 		return 0;
+	}
 
 	pmem_node = of_find_node_by_type(NULL, "ibm,persistent-memory");
-	if (!pmem_node)
+	if (!pmem_node) {
+		printk(KERN_INFO "%s: EXIT: pmem_node not found\n", __func__);
 		return 0;
+	}
 
 	/*
 	 * The generic OF bus probe/populate handles creating platform devices
@@ -161,7 +162,7 @@ static int pseries_pmem_init(void)
 	 * reconfig notifier to handle the hot-add/remove cases too.
 	 */
 	of_platform_bus_probe(pmem_node, drc_pmem_match, NULL);
-
+	printk(KERN_INFO "%s: EXIT: success\n", __func__);
 	return 0;
 }
 machine_arch_initcall(pseries, pseries_pmem_init);
