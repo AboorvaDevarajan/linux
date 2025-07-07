@@ -33,9 +33,9 @@
 
 // Debug macros for tracing
 
-#define DBG_ENTRY(fmt, ...) printk(KERN_INFO "%s: ENTRY: " fmt "\n", __func__, ##__VA_ARGS__)
-#define DBG_EXIT(fmt, ...) printk(KERN_INFO "%s: EXIT: " fmt "\n", __func__, ##__VA_ARGS__)
-#define DBG_MID(fmt, ...)  printk(KERN_INFO "%s: " fmt "\n", __func__, ##__VA_ARGS__)
+#define DBG_ENTRY(fmt, ...) printk(KERN_INFO "%s: ENTRY: " fmt " pid=%d\n", __func__, ##__VA_ARGS__, current->pid)
+#define DBG_EXIT(fmt, ...) printk(KERN_INFO "%s: EXIT: " fmt " pid=%d\n", __func__, ##__VA_ARGS__, current->pid)
+#define DBG_MID(fmt, ...)  printk(KERN_INFO "%s: " fmt " pid=%d\n", __func__, ##__VA_ARGS__, current->pid)
 
 
 /* Struct holding a single performance metric */
