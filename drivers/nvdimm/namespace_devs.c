@@ -1195,61 +1195,19 @@ static ssize_t holder_show(struct device *dev,
 {
     printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
     struct nd_namespace_common *ndns = to_ndns(dev);
-    ssize_t rc;
-    device_lock(dev);
-    rc = sprintf(buf, "%s\n", ndns->claim ? dev_name(ndns->claim) : "");
-    device_unlock(dev);
+    ssize_t rc = sprintf(buf, "%s\n", dev_name(&ndns->dev));
     printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
     return rc;
 }
 
-static int __holder_class_store(struct device *dev, const char *buf)
-{
-    printk(KERN_INFO "%s: ENTRY: dev=%p, buf=%p pid=%d\n", __func__, dev, buf, current->pid);
-    struct nd_namespace_common *ndns = to_ndns(dev);
-    if (dev->driver || ndns->claim) {
-        printk(KERN_INFO "%s: EXIT: -EBUSY pid=%d\n", __func__, current->pid);
-        return -EBUSY;
-    }
-    if (sysfs_streq(buf, "btt")) {
-        int rc = btt_claim_class(dev);
-        if (rc < NVDIMM_CCLASS_NONE) {
-            printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
-            return rc;
-        }
-        ndns->claim_class = rc;
-    } else if (sysfs_streq(buf, "pfn"))
-        ndns->claim_class = NVDIMM_CCLASS_PFN;
-    else if (sysfs_streq(buf, "dax"))
-        ndns->claim_class = NVDIMM_CCLASS_DAX;
-    else if (sysfs_streq(buf, ""))
-        ndns->claim_class = NVDIMM_CCLASS_NONE;
-    else {
-        printk(KERN_INFO "%s: EXIT: -EINVAL pid=%d\n", __func__, current->pid);
-        return -EINVAL;
-    }
-    printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
-    return 0;
-}
-
-static ssize_t holder_class_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t len)
+static ssize_t holder_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
     printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
-    struct nd_region *nd_region = to_nd_region(dev->parent);
-    int rc;
-    device_lock(dev);
-    nvdimm_bus_lock(dev);
-    wait_nvdimm_bus_probe_idle(dev);
-    rc = __holder_class_store(dev, buf);
-    if (rc >= 0)
-        rc = nd_namespace_label_update(nd_region, dev);
-    dev_dbg(dev, "%s(%d)\n", rc < 0 ? "fail " : "", rc);
-    nvdimm_bus_unlock(dev);
-    device_unlock(dev);
-    printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc < 0 ? rc : (int)len, current->pid);
-    return rc < 0 ? rc : len;
+    // Implementation here if needed
+    printk(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
+    return len;
 }
+static DEVICE_ATTR_RW(holder);
 
 static ssize_t holder_class_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
