@@ -1090,7 +1090,9 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 	mutex_unlock(&nd_mapping->lock);
 
 	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
-	return rc;
+	
+	return nd_label_write_index(ndd, ndd->ns_next,
+			nd_inc_seq(__le32_to_cpu(nsindex->seq)), 0);
 }
 
 int nd_pmem_namespace_label_update(struct nd_region *nd_region, struct nd_namespace_pmem *nspm, resource_size_t size)
