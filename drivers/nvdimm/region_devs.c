@@ -26,7 +26,7 @@ static DEFINE_PER_CPU(int, flush_idx);
 static int nvdimm_map_flush(struct device *dev, struct nvdimm *nvdimm, int dimm,
 		struct nd_region_data *ndrd)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, nvdimm=%p, dimm=%d, ndrd=%p pid=%d\n", __func__, dev, nvdimm, dimm, ndrd, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, nvdimm=%p, dimm=%d, ndrd=%p pid=%d\n", __func__, dev, nvdimm, dimm, ndrd, current->pid);
 	int i, j;
 
 	dev_dbg(dev, "%s: map %d flush address%s\n", nvdimm_name(nvdimm),
@@ -53,20 +53,20 @@ static int nvdimm_map_flush(struct device *dev, struct nvdimm *nvdimm, int dimm,
 			flush_page = devm_nvdimm_ioremap(dev,
 					PFN_PHYS(pfn), PAGE_SIZE);
 		if (!flush_page) {
-			printf(KERN_INFO "%s: EXIT: -ENXIO (flush_page is NULL) pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: -ENXIO (flush_page is NULL) pid=%d\n", __func__, current->pid);
 			return -ENXIO;
 		}
 		ndrd_set_flush_wpq(ndrd, dimm, i, flush_page
 				+ (res->start & ~PAGE_MASK));
 	}
 
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static int nd_region_invalidate_memregion(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	int i, incoherent = 0;
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
@@ -80,7 +80,7 @@ static int nd_region_invalidate_memregion(struct nd_region *nd_region)
 	}
 
 	if (!incoherent) {
-		printf(KERN_INFO "%s: EXIT: 0 (no incoherent) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: 0 (no incoherent) pid=%d\n", __func__, current->pid);
 		return 0;
 	}
 
@@ -93,7 +93,7 @@ static int nd_region_invalidate_memregion(struct nd_region *nd_region)
 		} else {
 			dev_err(&nd_region->dev,
 				"Failed to synchronize CPU cache state\n");
-			printf(KERN_INFO "%s: EXIT: -ENXIO (no cpu_cache_has_invalidate_memregion) pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: -ENXIO (no cpu_cache_has_invalidate_memregion) pid=%d\n", __func__, current->pid);
 			return -ENXIO;
 		}
 	}
@@ -107,13 +107,13 @@ out:
 		clear_bit(NDD_INCOHERENT, &nvdimm->flags);
 	}
 
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 int nd_region_activate(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	int i, j, rc, num_flush = 0;
 	struct nd_region_data *ndrd;
 	struct device *dev = &nd_region->dev;
@@ -126,7 +126,7 @@ int nd_region_activate(struct nd_region *nd_region)
 
 		if (test_bit(NDD_SECURITY_OVERWRITE, &nvdimm->flags)) {
 			nvdimm_bus_unlock(&nd_region->dev);
-			printf(KERN_INFO "%s: EXIT: -EBUSY (SECURITY_OVERWRITE) pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: -EBUSY (SECURITY_OVERWRITE) pid=%d\n", __func__, current->pid);
 			return -EBUSY;
 		}
 
@@ -141,19 +141,19 @@ int nd_region_activate(struct nd_region *nd_region)
 
 	rc = nd_region_invalidate_memregion(nd_region);
 	if (rc) {
-		printf(KERN_INFO "%s: EXIT: rc=%d (invalidate_memregion) pid=%d\n", __func__, rc, current->pid);
+		printk(KERN_INFO "%s: EXIT: rc=%d (invalidate_memregion) pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
 
 	ndrd = devm_kzalloc(dev, sizeof(*ndrd) + flush_data_size, GFP_KERNEL);
 	if (!ndrd) {
-		printf(KERN_INFO "%s: EXIT: -ENOMEM (devm_kzalloc failed) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -ENOMEM (devm_kzalloc failed) pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
 	}
 	dev_set_drvdata(dev, ndrd);
 
 	if (!num_flush) {
-		printf(KERN_INFO "%s: EXIT: 0 (no num_flush) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: 0 (no num_flush) pid=%d\n", __func__, current->pid);
 		return 0;
 	}
 
@@ -164,7 +164,7 @@ int nd_region_activate(struct nd_region *nd_region)
 		int rc = nvdimm_map_flush(&nd_region->dev, nvdimm, i, ndrd);
 
 		if (rc) {
-			printf(KERN_INFO "%s: EXIT: rc=%d (nvdimm_map_flush) pid=%d\n", __func__, rc, current->pid);
+			printk(KERN_INFO "%s: EXIT: rc=%d (nvdimm_map_flush) pid=%d\n", __func__, rc, current->pid);
 			return rc;
 		}
 	}
@@ -184,13 +184,13 @@ int nd_region_activate(struct nd_region *nd_region)
 				ndrd_set_flush_wpq(ndrd, j, 0, NULL);
 	}
 
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static void nd_region_release(struct device *dev)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	u16 i;
 
@@ -204,36 +204,36 @@ static void nd_region_release(struct device *dev)
 	if (!test_bit(ND_REGION_CXL, &nd_region->flags))
 		memregion_free(nd_region->id);
 	kfree(nd_region);
-	printf(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 struct nd_region *to_nd_region(struct device *dev)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nd_region *nd_region = container_of(dev, struct nd_region, dev);
 
 	WARN_ON(dev->type->release != nd_region_release);
-	printf(KERN_INFO "%s: EXIT: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: EXIT: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	return nd_region;
 }
 EXPORT_SYMBOL_GPL(to_nd_region);
 
 struct device *nd_region_dev(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	if (!nd_region) {
-		printf(KERN_INFO "%s: EXIT: NULL (nd_region is NULL) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: NULL (nd_region is NULL) pid=%d\n", __func__, current->pid);
 		return NULL;
 	}
-	printf(KERN_INFO "%s: EXIT: dev=%p pid=%d\n", __func__, &nd_region->dev, current->pid);
+	printk(KERN_INFO "%s: EXIT: dev=%p pid=%d\n", __func__, &nd_region->dev, current->pid);
 	return &nd_region->dev;
 }
 EXPORT_SYMBOL_GPL(nd_region_dev);
 
 void *nd_region_provider_data(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
-	printf(KERN_INFO "%s: EXIT: provider_data=%p pid=%d\n", __func__, nd_region->provider_data, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: EXIT: provider_data=%p pid=%d\n", __func__, nd_region->provider_data, current->pid);
 	return nd_region->provider_data;
 }
 EXPORT_SYMBOL_GPL(nd_region_provider_data);
@@ -248,7 +248,7 @@ EXPORT_SYMBOL_GPL(nd_region_provider_data);
  */
 int nd_region_to_nstype(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	if (is_memory(&nd_region->dev)) {
 		u16 i, label;
 		for (i = 0, label = 0; i < nd_region->ndr_mappings; i++) {
@@ -258,100 +258,100 @@ int nd_region_to_nstype(struct nd_region *nd_region)
 				label++;
 		}
 		if (label) {
-			printf(KERN_INFO "%s: EXIT: ND_DEVICE_NAMESPACE_PMEM pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: ND_DEVICE_NAMESPACE_PMEM pid=%d\n", __func__, current->pid);
 			return ND_DEVICE_NAMESPACE_PMEM;
 		} else {
-			printf(KERN_INFO "%s: EXIT: ND_DEVICE_NAMESPACE_IO pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: ND_DEVICE_NAMESPACE_IO pid=%d\n", __func__, current->pid);
 			return ND_DEVICE_NAMESPACE_IO;
 		}
 	}
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 EXPORT_SYMBOL(nd_region_to_nstype);
 
 static unsigned long long region_size(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	if (is_memory(&nd_region->dev)) {
-		printf(KERN_INFO "%s: EXIT: ndr_size=%llu pid=%d\n", __func__, nd_region->ndr_size, current->pid);
+		printk(KERN_INFO "%s: EXIT: ndr_size=%llu pid=%d\n", __func__, nd_region->ndr_size, current->pid);
 		return nd_region->ndr_size;
 	} else if (nd_region->ndr_mappings == 1) {
 		struct nd_mapping *nd_mapping = &nd_region->mapping[0];
-		printf(KERN_INFO "%s: EXIT: mapping[0].size=%llu pid=%d\n", __func__, nd_mapping->size, current->pid);
+		printk(KERN_INFO "%s: EXIT: mapping[0].size=%llu pid=%d\n", __func__, nd_mapping->size, current->pid);
 		return nd_mapping->size;
 	}
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static ssize_t size_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%llu\n", region_size(nd_region));
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(size);
 
 static ssize_t deep_flush_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%d\n", nvdimm_has_flush(nd_region));
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 
 static ssize_t deep_flush_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
 	bool flush;
 	int rc = kstrtobool(buf, &flush);
 	struct nd_region *nd_region = to_nd_region(dev);
 
 	if (rc) {
-		printf(KERN_INFO "%s: EXIT: rc=%d (kstrtobool failed) pid=%d\n", __func__, rc, current->pid);
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtobool failed) pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
 	if (!flush) {
-		printf(KERN_INFO "%s: EXIT: -EINVAL (flush is false) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -EINVAL (flush is false) pid=%d\n", __func__, current->pid);
 		return -EINVAL;
 	}
 	rc = nvdimm_flush(nd_region, NULL);
 	if (rc) {
-		printf(KERN_INFO "%s: EXIT: rc=%d (nvdimm_flush failed) pid=%d\n", __func__, rc, current->pid);
+		printk(KERN_INFO "%s: EXIT: rc=%d (nvdimm_flush failed) pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
-	printf(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
+	printk(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
 	return len;
 }
 static DEVICE_ATTR_RW(deep_flush);
 
 static ssize_t mappings_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%d\n", nd_region->ndr_mappings);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(mappings);
 
 static ssize_t nstype_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%d\n", nd_region_to_nstype(nd_region));
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(nstype);
 
 static ssize_t set_cookie_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 	ssize_t rc = 0;
@@ -359,7 +359,7 @@ static ssize_t set_cookie_show(struct device *dev, struct device_attribute *attr
 	if (is_memory(dev) && nd_set)
 		/* pass, should be precluded by region_visible */;
 	else {
-		printf(KERN_INFO "%s: EXIT: -ENXIO (not memory or no nd_set) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -ENXIO (not memory or no nd_set) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
 	}
 
@@ -389,11 +389,11 @@ static ssize_t set_cookie_show(struct device *dev, struct device_attribute *attr
 	device_unlock(dev);
 
 	if (rc) {
-		printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+		printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
 	ssize_t ret = sprintf(buf, "%#llx\n", nd_set->cookie1);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(set_cookie);
@@ -437,7 +437,7 @@ resource_size_t nd_region_allocatable_dpa(struct nd_region *nd_region)
 
 static ssize_t available_size_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long long available = 0;
 	device_lock(dev);
@@ -447,14 +447,14 @@ static ssize_t available_size_show(struct device *dev, struct device_attribute *
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 	ssize_t ret = sprintf(buf, "%llu\n", available);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(available_size);
 
 static ssize_t max_available_extent_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long long available = 0;
 	device_lock(dev);
@@ -464,14 +464,14 @@ static ssize_t max_available_extent_show(struct device *dev, struct device_attri
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 	ssize_t ret = sprintf(buf, "%llu\n", available);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(max_available_extent);
 
 static ssize_t init_namespaces_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region_data *ndrd = dev_get_drvdata(dev);
 	ssize_t rc;
 
@@ -481,14 +481,14 @@ static ssize_t init_namespaces_show(struct device *dev, struct device_attribute 
 	else
 		rc = -ENXIO;
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR_RO(init_namespaces);
 
 static ssize_t namespace_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -498,14 +498,14 @@ static ssize_t namespace_seed_show(struct device *dev, struct device_attribute *
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR_RO(namespace_seed);
 
 static ssize_t btt_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -515,14 +515,14 @@ static ssize_t btt_seed_show(struct device *dev, struct device_attribute *attr, 
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR_RO(btt_seed);
 
 static ssize_t pfn_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -532,14 +532,14 @@ static ssize_t pfn_seed_show(struct device *dev, struct device_attribute *attr, 
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR_RO(pfn_seed);
 
 static ssize_t dax_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -549,7 +549,7 @@ static ssize_t dax_seed_show(struct device *dev, struct device_attribute *attr, 
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR_RO(dax_seed);
@@ -586,16 +586,16 @@ static DEVICE_ATTR_RW(read_only);
 
 static ssize_t align_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%#lx\n", nd_region->align);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 
 static ssize_t align_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long val, dpa;
 	u32 mappings, remainder;
@@ -603,28 +603,28 @@ static ssize_t align_store(struct device *dev, struct device_attribute *attr, co
 
 	rc = kstrtoul(buf, 0, &val);
 	if (rc) {
-		printf(KERN_INFO "%s: EXIT: rc=%d (kstrtoul failed) pid=%d\n", __func__, rc, current->pid);
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtoul failed) pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
 
 	mappings = max_t(u32, 1, nd_region->ndr_mappings);
 	dpa = div_u64_rem(val, mappings, &remainder);
 	if (!is_power_of_2(dpa) || dpa < PAGE_SIZE || val > region_size(nd_region) || remainder) {
-		printf(KERN_INFO "%s: EXIT: -EINVAL (invalid alignment) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -EINVAL (invalid alignment) pid=%d\n", __func__, current->pid);
 		return -EINVAL;
 	}
 
 	nvdimm_bus_lock(dev);
 	nd_region->align = val;
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
+	printk(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
 	return len;
 }
 static DEVICE_ATTR_RW(align);
 
 static ssize_t region_badblocks_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 	device_lock(dev);
@@ -633,24 +633,24 @@ static ssize_t region_badblocks_show(struct device *dev, struct device_attribute
 	else
 		rc = -ENXIO;
 	device_unlock(dev);
-	printf(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 static DEVICE_ATTR(badblocks, 0444, region_badblocks_show, NULL);
 
 static ssize_t resource_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret = sprintf(buf, "%#llx\n", nd_region->ndr_start);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_ADMIN_RO(resource);
 
 static ssize_t persistence_domain_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t ret;
 	if (test_bit(ND_REGION_PERSIST_CACHE, &nd_region->flags))
@@ -659,7 +659,7 @@ static ssize_t persistence_domain_show(struct device *dev, struct device_attribu
 		ret = sprintf(buf, "memory_controller\n");
 	else
 		ret = sprintf(buf, "\n");
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 static DEVICE_ATTR_RO(persistence_domain);
@@ -740,19 +740,19 @@ static umode_t region_visible(struct kobject *kobj, struct attribute *a, int n)
 
 static ssize_t mappingN(struct device *dev, char *buf, int n)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p, buf=%p, n=%d pid=%d\n", __func__, dev, buf, n, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, buf=%p, n=%d pid=%d\n", __func__, dev, buf, n, current->pid);
 	struct nd_region *nd_region = to_nd_region(dev);
 	struct nd_mapping *nd_mapping;
 	struct nvdimm *nvdimm;
 
 	if (n >= nd_region->ndr_mappings) {
-		printf(KERN_INFO "%s: EXIT: -ENXIO (n >= ndr_mappings) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -ENXIO (n >= ndr_mappings) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
 	}
 	nd_mapping = &nd_region->mapping[n];
 	nvdimm = nd_mapping->nvdimm;
 	ssize_t ret = sprintf(buf, "%s,%llu,%llu,%d\n", dev_name(&nvdimm->dev), nd_mapping->start, nd_mapping->size, nd_mapping->position);
-	printf(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 
@@ -879,54 +879,54 @@ static const struct device_type nd_volatile_device_type = {
 
 bool is_nd_pmem(const struct device *dev)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	bool ret = dev ? dev->type == &nd_pmem_device_type : false;
-	printf(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 
 bool is_nd_volatile(const struct device *dev)
 {
-	printf(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	bool ret = dev ? dev->type == &nd_volatile_device_type : false;
-	printf(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 
 u64 nd_region_interleave_set_cookie(struct nd_region *nd_region, struct nd_namespace_index *nsindex)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p, nsindex=%p pid=%d\n", __func__, nd_region, nsindex, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, nsindex=%p pid=%d\n", __func__, nd_region, nsindex, current->pid);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 
 	if (!nd_set) {
-		printf(KERN_INFO "%s: EXIT: 0 (no nd_set) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: 0 (no nd_set) pid=%d\n", __func__, current->pid);
 		return 0;
 	}
 
 	if (nsindex && __le16_to_cpu(nsindex->major) == 1 && __le16_to_cpu(nsindex->minor) == 1) {
-		printf(KERN_INFO "%s: EXIT: cookie1=%llu pid=%d\n", __func__, nd_set->cookie1, current->pid);
+		printk(KERN_INFO "%s: EXIT: cookie1=%llu pid=%d\n", __func__, nd_set->cookie1, current->pid);
 		return nd_set->cookie1;
 	}
-	printf(KERN_INFO "%s: EXIT: cookie2=%llu pid=%d\n", __func__, nd_set->cookie2, current->pid);
+	printk(KERN_INFO "%s: EXIT: cookie2=%llu pid=%d\n", __func__, nd_set->cookie2, current->pid);
 	return nd_set->cookie2;
 }
 
 u64 nd_region_interleave_set_altcookie(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 
 	if (nd_set) {
-		printf(KERN_INFO "%s: EXIT: altcookie=%llu pid=%d\n", __func__, nd_set->altcookie, current->pid);
+		printk(KERN_INFO "%s: EXIT: altcookie=%llu pid=%d\n", __func__, nd_set->altcookie, current->pid);
 		return nd_set->altcookie;
 	}
-	printf(KERN_INFO "%s: EXIT: 0 (no nd_set) pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 (no nd_set) pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_mapping=%p pid=%d\n", __func__, nd_mapping, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_mapping=%p pid=%d\n", __func__, nd_mapping, current->pid);
 	struct nd_label_ent *label_ent, *e;
 
 	lockdep_assert_held(&nd_mapping->lock);
@@ -934,7 +934,7 @@ void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
 		list_del(&label_ent->list);
 		kfree(label_ent);
 	}
-	printf(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 /*
@@ -943,7 +943,7 @@ void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
  */
 void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p, dev=%p pid=%d\n", __func__, nd_region, dev, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, dev=%p pid=%d\n", __func__, nd_region, dev, current->pid);
 	nvdimm_bus_lock(dev);
 	if (nd_region->ns_seed == dev) {
 		nd_region_create_ns_seed(nd_region);
@@ -970,7 +970,7 @@ void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
 			nd_region_create_ns_seed(nd_region);
 	}
 	nvdimm_bus_unlock(dev);
-	printf(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 /**
@@ -992,7 +992,7 @@ void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
  */
 unsigned int nd_region_acquire_lane(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	unsigned int cpu, lane;
 
 	migrate_disable();
@@ -1008,14 +1008,14 @@ unsigned int nd_region_acquire_lane(struct nd_region *nd_region)
 	} else
 		lane = cpu;
 
-	printf(KERN_INFO "%s: EXIT: lane=%u pid=%d\n", __func__, lane, current->pid);
+	printk(KERN_INFO "%s: EXIT: lane=%u pid=%d\n", __func__, lane, current->pid);
 	return lane;
 }
 EXPORT_SYMBOL(nd_region_acquire_lane);
 
 void nd_region_release_lane(struct nd_region *nd_region, unsigned int lane)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p, lane=%u pid=%d\n", __func__, nd_region, lane, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, lane=%u pid=%d\n", __func__, nd_region, lane, current->pid);
 	if (nd_region->num_lanes < nr_cpu_ids) {
 		unsigned int cpu = smp_processor_id();
 		struct nd_percpu_lane *ndl_lock, *ndl_count;
@@ -1026,7 +1026,7 @@ void nd_region_release_lane(struct nd_region *nd_region, unsigned int lane)
 			spin_unlock(&ndl_lock->lock);
 	}
 	migrate_enable();
-	printf(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 EXPORT_SYMBOL(nd_region_release_lane);
 
@@ -1038,7 +1038,7 @@ EXPORT_SYMBOL(nd_region_release_lane);
 
 static unsigned long default_align(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	unsigned long align;
 	u32 remainder;
 	int mappings;
@@ -1052,7 +1052,7 @@ static unsigned long default_align(struct nd_region *nd_region)
 	if (remainder)
 		align *= mappings;
 
-	printf(KERN_INFO "%s: EXIT: align=%lu pid=%d\n", __func__, align, current->pid);
+	printk(KERN_INFO "%s: EXIT: align=%lu pid=%d\n", __func__, align, current->pid);
 	return align;
 }
 
@@ -1060,7 +1060,7 @@ static struct lock_class_key nvdimm_region_key;
 
 static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc, const struct device_type *dev_type, const char *caller)
 {
-	printf(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p, dev_type=%p, caller=%s pid=%d\n", __func__, nvdimm_bus, ndr_desc, dev_type, caller, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p, dev_type=%p, caller=%s pid=%d\n", __func__, nvdimm_bus, ndr_desc, dev_type, caller, current->pid);
 	struct nd_region *nd_region;
 	struct device *dev;
 	unsigned int i;
@@ -1087,7 +1087,7 @@ static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus, struct 
 			GFP_KERNEL);
 
 	if (!nd_region) {
-		printf(KERN_INFO "%s: EXIT: NULL (kzalloc failed) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: NULL (kzalloc failed) pid=%d\n", __func__, current->pid);
 		return NULL;
 	}
 	nd_region->ndr_mappings = ndr_desc->num_mappings;
@@ -1102,7 +1102,7 @@ static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus, struct 
 
 	nd_region->lane = alloc_percpu(struct nd_percpu_lane);
 	if (!nd_region->lane) {
-		printf(KERN_INFO "%s: EXIT: NULL (alloc_percpu failed) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: NULL (alloc_percpu failed) pid=%d\n", __func__, current->pid);
 		goto err_percpu;
 	}
 
@@ -1163,42 +1163,42 @@ err_percpu:
 		memregion_free(nd_region->id);
 err_id:
 	kfree(nd_region);
-	printf(KERN_INFO "%s: EXIT: NULL (error path) pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: NULL (error path) pid=%d\n", __func__, current->pid);
 	return NULL;
 }
 
 struct nd_region *nvdimm_pmem_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc)
 {
-	printf(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p pid=%d\n", __func__, nvdimm_bus, ndr_desc, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p pid=%d\n", __func__, nvdimm_bus, ndr_desc, current->pid);
 	ndr_desc->num_lanes = ND_MAX_LANES;
 	struct nd_region *ret = nd_region_create(nvdimm_bus, ndr_desc, &nd_pmem_device_type, __func__);
-	printf(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_pmem_region_create);
 
 struct nd_region *nvdimm_volatile_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc)
 {
-	printf(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p pid=%d\n", __func__, nvdimm_bus, ndr_desc, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p pid=%d\n", __func__, nvdimm_bus, ndr_desc, current->pid);
 	ndr_desc->num_lanes = ND_MAX_LANES;
 	struct nd_region *ret = nd_region_create(nvdimm_bus, ndr_desc, &nd_volatile_device_type, __func__);
-	printf(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_volatile_region_create);
 
 void nvdimm_region_delete(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	if (nd_region)
 		nd_device_unregister(&nd_region->dev, ND_SYNC);
-	printf(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 EXPORT_SYMBOL_GPL(nvdimm_region_delete);
 
 int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p, bio=%p pid=%d\n", __func__, nd_region, bio, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, bio=%p pid=%d\n", __func__, nd_region, bio, current->pid);
 	int rc = 0;
 
 	if (!nd_region->flush)
@@ -1207,7 +1207,7 @@ int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
 		if (nd_region->flush(nd_region, bio))
 			rc = -EIO;
 	}
-	printf(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
+	printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 /**
@@ -1216,7 +1216,7 @@ int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
  */
 int generic_nvdimm_flush(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	struct nd_region_data *ndrd = dev_get_drvdata(&nd_region->dev);
 	int i, idx;
 
@@ -1229,7 +1229,7 @@ int generic_nvdimm_flush(struct nd_region *nd_region)
 			writeq(1, ndrd_get_flush_wpq(ndrd, i, idx));
 	wmb();
 
-	printf(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvdimm_flush);
@@ -1244,16 +1244,16 @@ EXPORT_SYMBOL_GPL(nvdimm_flush);
  */
 int nvdimm_has_flush(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	int i;
 
 	if (nd_region->ndr_mappings == 0 || !IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API)) {
-		printf(KERN_INFO "%s: EXIT: -ENXIO (no mappings or no PMEM API) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: -ENXIO (no mappings or no PMEM API) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
 	}
 
 	if (test_bit(ND_REGION_ASYNC, &nd_region->flags) && nd_region->flush) {
-		printf(KERN_INFO "%s: EXIT: 1 (async+flush) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: 1 (async+flush) pid=%d\n", __func__, current->pid);
 		return 1;
 	}
 
@@ -1262,34 +1262,34 @@ int nvdimm_has_flush(struct nd_region *nd_region)
 		struct nvdimm *nvdimm = nd_mapping->nvdimm;
 
 		if (nvdimm->num_flush) {
-			printf(KERN_INFO "%s: EXIT: 1 (num_flush) pid=%d\n", __func__, current->pid);
+			printk(KERN_INFO "%s: EXIT: 1 (num_flush) pid=%d\n", __func__, current->pid);
 			return 1;
 		}
 	}
 
-	printf(KERN_INFO "%s: EXIT: 0 (platform persistence) pid=%d\n", __func__, current->pid);
+	printk(KERN_INFO "%s: EXIT: 0 (platform persistence) pid=%d\n", __func__, current->pid);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvdimm_has_flush);
 
 int nvdimm_has_cache(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	int ret = is_nd_pmem(&nd_region->dev) && !test_bit(ND_REGION_PERSIST_CACHE, &nd_region->flags);
-	printf(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_has_cache);
 
 bool is_nvdimm_sync(struct nd_region *nd_region)
 {
-	printf(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p pid=%d\n", __func__, nd_region, current->pid);
 	if (is_nd_volatile(&nd_region->dev)) {
-		printf(KERN_INFO "%s: EXIT: true (volatile) pid=%d\n", __func__, current->pid);
+		printk(KERN_INFO "%s: EXIT: true (volatile) pid=%d\n", __func__, current->pid);
 		return true;
 	}
 	bool ret = is_nd_pmem(&nd_region->dev) && !test_bit(ND_REGION_ASYNC, &nd_region->flags);
-	printf(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(is_nvdimm_sync);
