@@ -1089,8 +1089,8 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 	}
 	mutex_unlock(&nd_mapping->lock);
 
-	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
-	
+	printk(KERN_INFO "%s: EXIT\n", __func__);
+
 	return nd_label_write_index(ndd, ndd->ns_next,
 			nd_inc_seq(__le32_to_cpu(nsindex->seq)), 0);
 }
