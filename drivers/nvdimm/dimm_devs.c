@@ -67,49 +67,62 @@ static int validate_dimm(struct nvdimm_drvdata *ndd)
  */
 int nvdimm_init_nsarea(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	struct nd_cmd_get_config_size *cmd = &ndd->nsarea;
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(ndd->dev);
 	struct nvdimm_bus_descriptor *nd_desc;
 	int rc = validate_dimm(ndd);
 	int cmd_rc = 0;
 
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (validate_dimm failed)\n", __func__, rc);
 		return rc;
+	}
 
-	if (cmd->config_size)
+	if (cmd->config_size) {
+		printk(KERN_INFO "%s: EXIT: 0 (already valid)\n", __func__);
 		return 0; /* already valid */
+	}
 
 	memset(cmd, 0, sizeof(*cmd));
 	nd_desc = nvdimm_bus->nd_desc;
-	rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev),
-			ND_CMD_GET_CONFIG_SIZE, cmd, sizeof(*cmd), &cmd_rc);
-	if (rc < 0)
+	rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev), ND_CMD_GET_CONFIG_SIZE, cmd, sizeof(*cmd), &cmd_rc);
+	if (rc < 0) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (ndctl failed)\n", __func__, rc);
 		return rc;
+	}
+	printk(KERN_INFO "%s: EXIT: cmd_rc=%d\n", __func__, cmd_rc);
 	return cmd_rc;
 }
 
 int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
 			   size_t offset, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, buf=%p, offset=%zu, len=%zu\n", __func__, ndd, buf, offset, len);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(ndd->dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	int rc = validate_dimm(ndd), cmd_rc = 0;
 	struct nd_cmd_get_config_data_hdr *cmd;
 	size_t max_cmd_size, buf_offset;
 
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (validate_dimm failed)\n", __func__, rc);
 		return rc;
+	}
 
-	if (offset + len > ndd->nsarea.config_size)
+	if (offset + len > ndd->nsarea.config_size) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (out of bounds)\n", __func__);
 		return -ENXIO;
+	}
 
 	max_cmd_size = min_t(u32, len, ndd->nsarea.max_xfer);
 	cmd = kvzalloc(max_cmd_size + sizeof(*cmd), GFP_KERNEL);
-	if (!cmd)
+	if (!cmd) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM (kvzalloc failed)\n", __func__);
 		return -ENOMEM;
+	}
 
-	for (buf_offset = 0; len;
-	     len -= cmd->in_length, buf_offset += cmd->in_length) {
+	for (buf_offset = 0; len; len -= cmd->in_length, buf_offset += cmd->in_length) {
 		size_t cmd_size;
 
 		cmd->in_offset = offset + buf_offset;
@@ -117,16 +130,17 @@ int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
 
 		cmd_size = sizeof(*cmd) + cmd->in_length;
 
-		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev),
-				ND_CMD_GET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
-		if (rc < 0)
+		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev), ND_CMD_GET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
+		if (rc < 0) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (ndctl failed)\n", __func__, rc);
 			break;
+		}
 		if (cmd_rc < 0) {
 			rc = cmd_rc;
+			printk(KERN_INFO "%s: EXIT: cmd_rc=%d (cmd_rc failed)\n", __func__, cmd_rc);
 			break;
 		}
 
-		/* out_buf should be valid, copy it into our output buffer */
 		memcpy(buf + buf_offset, cmd->out_buf, cmd->in_length);
 	}
 	kvfree(cmd);
@@ -137,98 +151,120 @@ int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
 int nvdimm_set_config_data(struct nvdimm_drvdata *ndd, size_t offset,
 		void *buf, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, offset=%zu, buf=%p, len=%zu\n", __func__, ndd, offset, buf, len);
 	size_t max_cmd_size, buf_offset;
 	struct nd_cmd_set_config_hdr *cmd;
 	int rc = validate_dimm(ndd), cmd_rc = 0;
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(ndd->dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (validate_dimm failed)\n", __func__, rc);
 		return rc;
+	}
 
-	if (offset + len > ndd->nsarea.config_size)
+	if (offset + len > ndd->nsarea.config_size) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (out of bounds)\n", __func__);
 		return -ENXIO;
+	}
 
 	max_cmd_size = min_t(u32, len, ndd->nsarea.max_xfer);
 	cmd = kvzalloc(max_cmd_size + sizeof(*cmd) + sizeof(u32), GFP_KERNEL);
-	if (!cmd)
+	if (!cmd) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM (kvzalloc failed)\n", __func__);
 		return -ENOMEM;
+	}
 
-	for (buf_offset = 0; len; len -= cmd->in_length,
-			buf_offset += cmd->in_length) {
+	for (buf_offset = 0; len; len -= cmd->in_length, buf_offset += cmd->in_length) {
 		size_t cmd_size;
 
 		cmd->in_offset = offset + buf_offset;
 		cmd->in_length = min(max_cmd_size, len);
 		memcpy(cmd->in_buf, buf + buf_offset, cmd->in_length);
 
-		/* status is output in the last 4-bytes of the command buffer */
 		cmd_size = sizeof(*cmd) + cmd->in_length + sizeof(u32);
 
-		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev),
-				ND_CMD_SET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
-		if (rc < 0)
+		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev), ND_CMD_SET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
+		if (rc < 0) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (ndctl failed)\n", __func__, rc);
 			break;
+		}
 		if (cmd_rc < 0) {
 			rc = cmd_rc;
+			printk(KERN_INFO "%s: EXIT: cmd_rc=%d (cmd_rc failed)\n", __func__, cmd_rc);
 			break;
 		}
 	}
 	kvfree(cmd);
 
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
 void nvdimm_set_labeling(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
 	set_bit(NDD_LABELING, &nvdimm->flags);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 void nvdimm_set_locked(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
 	set_bit(NDD_LOCKED, &nvdimm->flags);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 void nvdimm_clear_locked(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
 	clear_bit(NDD_LOCKED, &nvdimm->flags);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 static void nvdimm_release(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
 	ida_free(&dimm_ida, nvdimm->id);
 	kfree(nvdimm);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 struct nvdimm *to_nvdimm(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = container_of(dev, struct nvdimm, dev);
 
 	WARN_ON(!is_nvdimm(dev));
+	printk(KERN_INFO "%s: EXIT: nvdimm=%p\n", __func__, nvdimm);
 	return nvdimm;
 }
 EXPORT_SYMBOL_GPL(to_nvdimm);
 
 struct nvdimm_drvdata *to_ndd(struct nd_mapping *nd_mapping)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_mapping=%p\n", __func__, nd_mapping);
 	struct nvdimm *nvdimm = nd_mapping->nvdimm;
 
 	WARN_ON_ONCE(!is_nvdimm_bus_locked(&nvdimm->dev));
 
-	return dev_get_drvdata(&nvdimm->dev);
+	struct nvdimm_drvdata *ret = dev_get_drvdata(&nvdimm->dev);
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL(to_ndd);
 
 void nvdimm_drvdata_release(struct kref *kref)
 {
+	printk(KERN_INFO "%s: ENTRY: kref=%p\n", __func__, kref);
 	struct nvdimm_drvdata *ndd = container_of(kref, typeof(*ndd), kref);
 	struct device *dev = ndd->dev;
 	struct resource *res, *_r;
@@ -242,96 +278,118 @@ void nvdimm_drvdata_release(struct kref *kref)
 	kvfree(ndd->data);
 	kfree(ndd);
 	put_device(dev);
+	printk(KERN_INFO "%s: EXIT: dev=%p, ndd=%p\n", __func__, dev, ndd);
 }
 
 void get_ndd(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	kref_get(&ndd->kref);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 void put_ndd(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	if (ndd)
 		kref_put(&ndd->kref, nvdimm_drvdata_release);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 const char *nvdimm_name(struct nvdimm *nvdimm)
 {
-	return dev_name(&nvdimm->dev);
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
+	const char *ret = dev_name(&nvdimm->dev);
+	printk(KERN_INFO "%s: EXIT: ret=%s\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_name);
 
 struct kobject *nvdimm_kobj(struct nvdimm *nvdimm)
 {
-	return &nvdimm->dev.kobj;
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
+	struct kobject *ret = &nvdimm->dev.kobj;
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_kobj);
 
 unsigned long nvdimm_cmd_mask(struct nvdimm *nvdimm)
 {
-	return nvdimm->cmd_mask;
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
+	unsigned long ret = nvdimm->cmd_mask;
+	printk(KERN_INFO "%s: EXIT: ret=%lu\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_cmd_mask);
 
 void *nvdimm_provider_data(struct nvdimm *nvdimm)
 {
-	if (nvdimm)
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
+	if (nvdimm) {
+		printk(KERN_INFO "%s: EXIT: provider_data=%p\n", __func__, nvdimm->provider_data);
 		return nvdimm->provider_data;
+	}
+	printk(KERN_INFO "%s: EXIT: NULL (nvdimm is NULL)\n", __func__);
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(nvdimm_provider_data);
 
-static ssize_t commands_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t commands_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	int cmd, len = 0;
 
-	if (!nvdimm->cmd_mask)
-		return sprintf(buf, "\n");
+	if (!nvdimm->cmd_mask) {
+		ssize_t ret = sprintf(buf, "\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (no cmd_mask)\n", __func__, ret);
+		return ret;
+	}
 
 	for_each_set_bit(cmd, &nvdimm->cmd_mask, BITS_PER_LONG)
 		len += sprintf(buf + len, "%s ", nvdimm_cmd_name(cmd));
 	len += sprintf(buf + len, "\n");
+	printk(KERN_INFO "%s: EXIT: len=%d\n", __func__, len);
 	return len;
 }
 static DEVICE_ATTR_RO(commands);
 
-static ssize_t flags_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t flags_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
-
-	return sprintf(buf, "%s%s\n",
+	ssize_t ret = sprintf(buf, "%s%s\n",
 			test_bit(NDD_LABELING, &nvdimm->flags) ? "label " : "",
 			test_bit(NDD_LOCKED, &nvdimm->flags) ? "lock " : "");
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(flags);
 
-static ssize_t state_show(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t state_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
-
-	/*
-	 * The state may be in the process of changing, userspace should
-	 * quiesce probing if it wants a static answer
-	 */
 	nvdimm_bus_lock(dev);
 	nvdimm_bus_unlock(dev);
-	return sprintf(buf, "%s\n", atomic_read(&nvdimm->busy)
-			? "active" : "idle");
+	ssize_t ret = sprintf(buf, "%s\n", atomic_read(&nvdimm->busy) ? "active" : "idle");
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(state);
 
 static ssize_t __available_slots_show(struct nvdimm_drvdata *ndd, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, buf=%p\n", __func__, ndd, buf);
 	struct device *dev;
 	ssize_t rc;
 	u32 nfree;
 
-	if (!ndd)
+	if (!ndd) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (ndd is NULL)\n", __func__);
 		return -ENXIO;
+	}
 
 	dev = ndd->dev;
 	nvdimm_bus_lock(dev);
@@ -343,73 +401,78 @@ static ssize_t __available_slots_show(struct nvdimm_drvdata *ndd, char *buf)
 		nfree--;
 	rc = sprintf(buf, "%d\n", nfree);
 	nvdimm_bus_unlock(dev);
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 
 static ssize_t available_slots_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	ssize_t rc;
-
 	device_lock(dev);
 	rc = __available_slots_show(dev_get_drvdata(dev), buf);
 	device_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(available_slots);
 
-static ssize_t security_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+static ssize_t security_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
-	/*
-	 * For the test version we need to poll the "hardware" in order
-	 * to get the updated status for unlock testing.
-	 */
 	if (IS_ENABLED(CONFIG_NVDIMM_SECURITY_TEST))
 		nvdimm->sec.flags = nvdimm_security_flags(nvdimm, NVDIMM_USER);
 
-	if (test_bit(NVDIMM_SECURITY_OVERWRITE, &nvdimm->sec.flags))
-		return sprintf(buf, "overwrite\n");
-	if (test_bit(NVDIMM_SECURITY_DISABLED, &nvdimm->sec.flags))
-		return sprintf(buf, "disabled\n");
-	if (test_bit(NVDIMM_SECURITY_UNLOCKED, &nvdimm->sec.flags))
-		return sprintf(buf, "unlocked\n");
-	if (test_bit(NVDIMM_SECURITY_LOCKED, &nvdimm->sec.flags))
-		return sprintf(buf, "locked\n");
+	if (test_bit(NVDIMM_SECURITY_OVERWRITE, &nvdimm->sec.flags)) {
+		ssize_t ret = sprintf(buf, "overwrite\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (overwrite)\n", __func__, ret);
+		return ret;
+	}
+	if (test_bit(NVDIMM_SECURITY_DISABLED, &nvdimm->sec.flags)) {
+		ssize_t ret = sprintf(buf, "disabled\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (disabled)\n", __func__, ret);
+		return ret;
+	}
+	if (test_bit(NVDIMM_SECURITY_UNLOCKED, &nvdimm->sec.flags)) {
+		ssize_t ret = sprintf(buf, "unlocked\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (unlocked)\n", __func__, ret);
+		return ret;
+	}
+	if (test_bit(NVDIMM_SECURITY_LOCKED, &nvdimm->sec.flags)) {
+		ssize_t ret = sprintf(buf, "locked\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (locked)\n", __func__, ret);
+		return ret;
+	}
+	printk(KERN_INFO "%s: EXIT: -ENOTTY (no state)\n", __func__);
 	return -ENOTTY;
 }
 
 static ssize_t frozen_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
-
-	return sprintf(buf, "%d\n", test_bit(NVDIMM_SECURITY_FROZEN,
-				&nvdimm->sec.flags));
+	ssize_t ret = sprintf(buf, "%d\n", test_bit(NVDIMM_SECURITY_FROZEN, &nvdimm->sec.flags));
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(frozen);
 
 static ssize_t security_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
-
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu\n", __func__, dev, attr, buf, len);
 	ssize_t rc;
-
-	/*
-	 * Require all userspace triggered security management to be
-	 * done while probing is idle and the DIMM is not in active use
-	 * in any region.
-	 */
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	wait_nvdimm_bus_probe_idle(dev);
 	rc = nvdimm_security_store(dev, buf, len);
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RW(security);
@@ -426,26 +489,33 @@ static struct attribute *nvdimm_attributes[] = {
 
 static umode_t nvdimm_visible(struct kobject *kobj, struct attribute *a, int n)
 {
+	printk(KERN_INFO "%s: ENTRY: kobj=%p, a=%p, n=%d\n", __func__, kobj, a, n);
 	struct device *dev = container_of(kobj, typeof(*dev), kobj);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
-	if (a != &dev_attr_security.attr && a != &dev_attr_frozen.attr)
+	if (a != &dev_attr_security.attr && a != &dev_attr_frozen.attr) {
+		printk(KERN_INFO "%s: EXIT: mode=%o\n", __func__, a->mode);
 		return a->mode;
-	if (!nvdimm->sec.flags)
+	}
+	if (!nvdimm->sec.flags) {
+		printk(KERN_INFO "%s: EXIT: 0 (no sec.flags)\n", __func__);
 		return 0;
+	}
 
 	if (a == &dev_attr_security.attr) {
-		/* Are there any state mutation ops (make writable)? */
-		if (nvdimm->sec.ops->freeze || nvdimm->sec.ops->disable
-				|| nvdimm->sec.ops->change_key
-				|| nvdimm->sec.ops->erase
-				|| nvdimm->sec.ops->overwrite)
+		if (nvdimm->sec.ops->freeze || nvdimm->sec.ops->disable || nvdimm->sec.ops->change_key || nvdimm->sec.ops->erase || nvdimm->sec.ops->overwrite) {
+			printk(KERN_INFO "%s: EXIT: mode=%o (security ops)\n", __func__, a->mode);
 			return a->mode;
+		}
+		printk(KERN_INFO "%s: EXIT: 0444 (security read-only)\n", __func__);
 		return 0444;
 	}
 
-	if (nvdimm->sec.ops->freeze)
+	if (nvdimm->sec.ops->freeze) {
+		printk(KERN_INFO "%s: EXIT: mode=%o (freeze)\n", __func__, a->mode);
 		return a->mode;
+	}
+	printk(KERN_INFO "%s: EXIT: 0 (no freeze)\n", __func__);
 	return 0;
 }
 
@@ -456,28 +526,47 @@ static const struct attribute_group nvdimm_attribute_group = {
 
 static ssize_t result_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	enum nvdimm_fwa_result result;
 
-	if (!nvdimm->fw_ops)
+	if (!nvdimm->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (no fw_ops)\n", __func__);
 		return -EOPNOTSUPP;
+	}
 
 	nvdimm_bus_lock(dev);
 	result = nvdimm->fw_ops->activate_result(nvdimm);
 	nvdimm_bus_unlock(dev);
 
 	switch (result) {
-	case NVDIMM_FWA_RESULT_NONE:
-		return sprintf(buf, "none\n");
-	case NVDIMM_FWA_RESULT_SUCCESS:
-		return sprintf(buf, "success\n");
-	case NVDIMM_FWA_RESULT_FAIL:
-		return sprintf(buf, "fail\n");
-	case NVDIMM_FWA_RESULT_NOTSTAGED:
-		return sprintf(buf, "not_staged\n");
-	case NVDIMM_FWA_RESULT_NEEDRESET:
-		return sprintf(buf, "need_reset\n");
+	case NVDIMM_FWA_RESULT_NONE: {
+		ssize_t ret = sprintf(buf, "none\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (none)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_RESULT_SUCCESS: {
+		ssize_t ret = sprintf(buf, "success\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (success)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_RESULT_FAIL: {
+		ssize_t ret = sprintf(buf, "fail\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (fail)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_RESULT_NOTSTAGED: {
+		ssize_t ret = sprintf(buf, "not_staged\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (not_staged)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_RESULT_NEEDRESET: {
+		ssize_t ret = sprintf(buf, "need_reset\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (need_reset)\n", __func__, ret);
+		return ret;
+	}
 	default:
+		printk(KERN_INFO "%s: EXIT: -ENXIO (default)\n", __func__);
 		return -ENXIO;
 	}
 }
@@ -485,51 +574,71 @@ static DEVICE_ATTR_ADMIN_RO(result);
 
 static ssize_t activate_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	enum nvdimm_fwa_state state;
 
-	if (!nvdimm->fw_ops)
+	if (!nvdimm->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (no fw_ops)\n", __func__);
 		return -EOPNOTSUPP;
+	}
 
 	nvdimm_bus_lock(dev);
 	state = nvdimm->fw_ops->activate_state(nvdimm);
 	nvdimm_bus_unlock(dev);
 
 	switch (state) {
-	case NVDIMM_FWA_IDLE:
-		return sprintf(buf, "idle\n");
-	case NVDIMM_FWA_BUSY:
-		return sprintf(buf, "busy\n");
-	case NVDIMM_FWA_ARMED:
-		return sprintf(buf, "armed\n");
+	case NVDIMM_FWA_IDLE: {
+		ssize_t ret = sprintf(buf, "idle\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (idle)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_BUSY: {
+		ssize_t ret = sprintf(buf, "busy\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (busy)\n", __func__, ret);
+		return ret;
+	}
+	case NVDIMM_FWA_ARMED: {
+		ssize_t ret = sprintf(buf, "armed\n");
+		printk(KERN_INFO "%s: EXIT: ret=%zd (armed)\n", __func__, ret);
+		return ret;
+	}
 	default:
+		printk(KERN_INFO "%s: EXIT: -ENXIO (default)\n", __func__);
 		return -ENXIO;
 	}
 }
 
-static ssize_t activate_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t len)
+static ssize_t activate_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu\n", __func__, dev, attr, buf, len);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	enum nvdimm_fwa_trigger arg;
 	int rc;
 
-	if (!nvdimm->fw_ops)
+	if (!nvdimm->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (no fw_ops)\n", __func__);
 		return -EOPNOTSUPP;
+	}
 
 	if (sysfs_streq(buf, "arm"))
 		arg = NVDIMM_FWA_ARM;
 	else if (sysfs_streq(buf, "disarm"))
 		arg = NVDIMM_FWA_DISARM;
-	else
+	else {
+		printk(KERN_INFO "%s: EXIT: -EINVAL (invalid arg)\n", __func__);
 		return -EINVAL;
+	}
 
 	nvdimm_bus_lock(dev);
 	rc = nvdimm->fw_ops->arm(nvdimm, arg);
 	nvdimm_bus_unlock(dev);
 
-	if (rc < 0)
+	if (rc < 0) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (fw_ops->arm failed)\n", __func__, rc);
 		return rc;
+	}
+	printk(KERN_INFO "%s: EXIT: len=%zu\n", __func__, len);
 	return len;
 }
 static DEVICE_ATTR_ADMIN_RW(activate);
@@ -542,24 +651,32 @@ static struct attribute *nvdimm_firmware_attributes[] = {
 
 static umode_t nvdimm_firmware_visible(struct kobject *kobj, struct attribute *a, int n)
 {
+	printk(KERN_INFO "%s: ENTRY: kobj=%p, a=%p, n=%d\n", __func__, kobj, a, n);
 	struct device *dev = container_of(kobj, typeof(*dev), kobj);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 	enum nvdimm_fwa_capability cap;
 
-	if (!nd_desc->fw_ops)
+	if (!nd_desc->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: 0 (no fw_ops)\n", __func__);
 		return 0;
-	if (!nvdimm->fw_ops)
+	}
+	if (!nvdimm->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: 0 (no nvdimm fw_ops)\n", __func__);
 		return 0;
+	}
 
 	nvdimm_bus_lock(dev);
 	cap = nd_desc->fw_ops->capability(nd_desc);
 	nvdimm_bus_unlock(dev);
 
-	if (cap < NVDIMM_FWA_CAP_QUIESCE)
+	if (cap < NVDIMM_FWA_CAP_QUIESCE) {
+		printk(KERN_INFO "%s: EXIT: 0 (cap < QUIESCE)\n", __func__);
 		return 0;
+	}
 
+	printk(KERN_INFO "%s: EXIT: mode=%o\n", __func__, a->mode);
 	return a->mode;
 }
 
@@ -584,7 +701,10 @@ static const struct device_type nvdimm_device_type = {
 
 bool is_nvdimm(const struct device *dev)
 {
-	return dev->type == &nvdimm_device_type;
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
+	bool ret = dev->type == &nvdimm_device_type;
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 static struct lock_class_key nvdimm_key;
@@ -598,13 +718,16 @@ struct nvdimm *__nvdimm_create(struct nvdimm_bus *nvdimm_bus,
 {
 	struct nvdimm *nvdimm = kzalloc(sizeof(*nvdimm), GFP_KERNEL);
 	struct device *dev;
-
-	if (!nvdimm)
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, provider_data=%p, groups=%p, flags=%lx, cmd_mask=%lx, num_flush=%d, flush_wpq=%p, dimm_id=%s, sec_ops=%p, fw_ops=%p\n", __func__, nvdimm_bus, provider_data, groups, flags, cmd_mask, num_flush, flush_wpq, dimm_id, sec_ops, fw_ops);
+	if (!nvdimm) {
+		printk(KERN_INFO "%s: EXIT: NULL (nvdimm allocation failed)\n", __func__);
 		return NULL;
+	}
 
 	nvdimm->id = ida_alloc(&dimm_ida, GFP_KERNEL);
 	if (nvdimm->id < 0) {
 		kfree(nvdimm);
+		printk(KERN_INFO "%s: EXIT: NULL (id allocation failed)\n", __func__);
 		return NULL;
 	}
 
@@ -639,6 +762,7 @@ struct nvdimm *__nvdimm_create(struct nvdimm_bus *nvdimm_bus,
 	else
 		nd_device_register(dev);
 
+	printk(KERN_INFO "%s: EXIT: nvdimm=%p\n", __func__, nvdimm);
 	return nvdimm;
 }
 EXPORT_SYMBOL_GPL(__nvdimm_create);
@@ -647,7 +771,7 @@ void nvdimm_delete(struct nvdimm *nvdimm)
 {
 	struct device *dev = &nvdimm->dev;
 	bool dev_put = false;
-
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
 	/* We are shutting down. Make state frozen artificially. */
 	nvdimm_bus_lock(dev);
 	set_bit(NVDIMM_SECURITY_FROZEN, &nvdimm->sec.flags);
@@ -658,6 +782,7 @@ void nvdimm_delete(struct nvdimm *nvdimm)
 	if (dev_put)
 		put_device(dev);
 	nd_device_unregister(dev, ND_SYNC);
+	printk(KERN_INFO "%s: EXIT: nvdimm=%p\n", __func__, nvdimm);
 }
 EXPORT_SYMBOL_GPL(nvdimm_delete);
 
@@ -685,30 +810,39 @@ EXPORT_SYMBOL_GPL(nvdimm_security_setup_events);
 
 int nvdimm_in_overwrite(struct nvdimm *nvdimm)
 {
-	return test_bit(NDD_SECURITY_OVERWRITE, &nvdimm->flags);
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
+	int ret = test_bit(NDD_SECURITY_OVERWRITE, &nvdimm->flags);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_in_overwrite);
 
 int nvdimm_security_freeze(struct nvdimm *nvdimm)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm=%p\n", __func__, nvdimm);
 	int rc;
 
 	WARN_ON_ONCE(!is_nvdimm_bus_locked(&nvdimm->dev));
 
-	if (!nvdimm->sec.ops || !nvdimm->sec.ops->freeze)
+	if (!nvdimm->sec.ops || !nvdimm->sec.ops->freeze) {
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (no freeze op)\n", __func__);
 		return -EOPNOTSUPP;
+	}
 
-	if (!nvdimm->sec.flags)
+	if (!nvdimm->sec.flags) {
+		printk(KERN_INFO "%s: EXIT: -EIO (no sec.flags)\n", __func__);
 		return -EIO;
+	}
 
 	if (test_bit(NDD_SECURITY_OVERWRITE, &nvdimm->flags)) {
 		dev_warn(&nvdimm->dev, "Overwrite operation in progress.\n");
+		printk(KERN_INFO "%s: EXIT: -EBUSY (overwrite in progress)\n", __func__);
 		return -EBUSY;
 	}
 
 	rc = nvdimm->sec.ops->freeze(nvdimm);
 	nvdimm->sec.flags = nvdimm_security_flags(nvdimm, NVDIMM_USER);
-
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
@@ -827,25 +961,34 @@ resource_size_t nd_pmem_available_dpa(struct nd_region *nd_region,
 
 void nvdimm_free_dpa(struct nvdimm_drvdata *ndd, struct resource *res)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, res=%p\n", __func__, ndd, res);
 	WARN_ON_ONCE(!is_nvdimm_bus_locked(ndd->dev));
 	kfree(res->name);
 	__release_region(&ndd->dpa, res->start, resource_size(res));
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 struct resource *nvdimm_allocate_dpa(struct nvdimm_drvdata *ndd,
 		struct nd_label_id *label_id, resource_size_t start,
 		resource_size_t n)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, label_id=%p, start=%llu, n=%llu\n", __func__, ndd, label_id, start, n);
 	char *name = kmemdup(label_id, sizeof(*label_id), GFP_KERNEL);
 	struct resource *res;
 
-	if (!name)
+	if (!name) {
+		printk(KERN_INFO "%s: EXIT: NULL (kmemdup failed)\n", __func__);
 		return NULL;
+	}
 
 	WARN_ON_ONCE(!is_nvdimm_bus_locked(ndd->dev));
 	res = __request_region(&ndd->dpa, start, n, name, 0);
-	if (!res)
+	if (!res) {
 		kfree(name);
+		printk(KERN_INFO "%s: EXIT: NULL (__request_region failed)\n", __func__);
+		return NULL;
+	}
+	printk(KERN_INFO "%s: EXIT: res=%p\n", __func__, res);
 	return res;
 }
 
@@ -859,6 +1002,7 @@ struct resource *nvdimm_allocate_dpa(struct nvdimm_drvdata *ndd,
 resource_size_t nvdimm_allocated_dpa(struct nvdimm_drvdata *ndd,
 		struct nd_label_id *label_id)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, label_id=%p\n", __func__, ndd, label_id);
 	resource_size_t allocated = 0;
 	struct resource *res;
 
@@ -866,33 +1010,40 @@ resource_size_t nvdimm_allocated_dpa(struct nvdimm_drvdata *ndd,
 		if (strcmp(res->name, label_id->id) == 0)
 			allocated += resource_size(res);
 
+	printk(KERN_INFO "%s: EXIT: allocated=%llu\n", __func__, allocated);
 	return allocated;
 }
 
 static int count_dimms(struct device *dev, void *c)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, c=%p\n", __func__, dev, c);
 	int *count = c;
 
 	if (is_nvdimm(dev))
 		(*count)++;
+	printk(KERN_INFO "%s: EXIT: *count=%d\n", __func__, *count);
 	return 0;
 }
 
 int nvdimm_bus_check_dimm_count(struct nvdimm_bus *nvdimm_bus, int dimm_count)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, dimm_count=%d\n", __func__, nvdimm_bus, dimm_count);
 	int count = 0;
-	/* Flush any possible dimm registration failures */
 	nd_synchronize();
-
 	device_for_each_child(&nvdimm_bus->dev, &count, count_dimms);
 	dev_dbg(&nvdimm_bus->dev, "count: %d\n", count);
-	if (count != dimm_count)
+	if (count != dimm_count) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (count mismatch)\n", __func__);
 		return -ENXIO;
+	}
+	printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvdimm_bus_check_dimm_count);
 
 void __exit nvdimm_devs_exit(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	ida_destroy(&dimm_ida);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }

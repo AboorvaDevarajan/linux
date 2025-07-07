@@ -1000,6 +1000,7 @@ static int init_labels(struct nd_mapping *nd_mapping, int num_labels)
 	struct nd_namespace_index *nsindex;
 	struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
 
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, num_labels=%d\n", __func__, ndd, num_labels);
 	mutex_lock(&nd_mapping->lock);
 	list_for_each_entry(label_ent, &nd_mapping->labels, list)
 		old_num_labels++;
@@ -1011,29 +1012,33 @@ static int init_labels(struct nd_mapping *nd_mapping, int num_labels)
 	 */
 	for (i = old_num_labels; i < num_labels; i++) {
 		label_ent = kzalloc(sizeof(*label_ent), GFP_KERNEL);
-		if (!label_ent)
+		if (!label_ent) {
+			printk(KERN_INFO "%s: EXIT: -ENOMEM\n", __func__);
 			return -ENOMEM;
+		}
 		mutex_lock(&nd_mapping->lock);
 		list_add_tail(&label_ent->list, &nd_mapping->labels);
 		mutex_unlock(&nd_mapping->lock);
 	}
 
-	if (ndd->ns_current == -1 || ndd->ns_next == -1)
-		/* pass */;
-	else
+	if (ndd->ns_current == -1 || ndd->ns_next == -1) {
+		printk(KERN_INFO "%s: EXIT: max(num_labels, old_num_labels)=%d\n", __func__, max(num_labels, old_num_labels));
 		return max(num_labels, old_num_labels);
+	}
 
 	nsindex = to_namespace_index(ndd, 0);
 	memset(nsindex, 0, ndd->nsarea.config_size);
 	for (i = 0; i < 2; i++) {
 		int rc = nd_label_write_index(ndd, i, 3 - i, ND_NSINDEX_INIT);
 
-		if (rc)
+		if (rc) {
+			printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 			return rc;
+		}
 	}
 	ndd->ns_next = 1;
 	ndd->ns_current = 0;
-
+	printk(KERN_INFO "%s: EXIT: max(num_labels, old_num_labels)=%d\n", __func__, max(num_labels, old_num_labels));
 	return max(num_labels, old_num_labels);
 }
 
@@ -1047,12 +1052,18 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 	u32 nslot, slot;
 	int active = 0;
 
-	if (!uuid)
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, uuid=%p\n", __func__, ndd, uuid);
+	if (!uuid) {
+		printk(KERN_INFO "%s: EXIT: 0 (uuid is NULL)\n", __func__);
 		return 0;
+	}
+
 
 	/* no index || no labels == nothing to delete */
-	if (!preamble_next(ndd, &nsindex, &free, &nslot))
+	if (!preamble_next(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: 0 (preamble_next failed)\n", __func__);
 		return 0;
+	}
 
 	mutex_lock(&nd_mapping->lock);
 	list_for_each_entry_safe(label_ent, e, &nd_mapping->labels, list) {
@@ -1078,8 +1089,8 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 	}
 	mutex_unlock(&nd_mapping->lock);
 
-	return nd_label_write_index(ndd, ndd->ns_next,
-			nd_inc_seq(__le32_to_cpu(nsindex->seq)), 0);
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
+	return rc;
 }
 
 int nd_pmem_namespace_label_update(struct nd_region *nd_region, struct nd_namespace_pmem *nspm, resource_size_t size)
