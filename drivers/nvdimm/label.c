@@ -29,6 +29,7 @@ static const char NSINDEX_SIGNATURE[] = "NAMESPACE_INDEX\0";
 
 static u32 best_seq(u32 a, u32 b)
 {
+	printk(KERN_INFO "%s: ENTRY: a=%u, b=%u\n", __func__, a, b);
 	a &= NSINDEX_SEQ_MASK;
 	b &= NSINDEX_SEQ_MASK;
 
@@ -44,11 +45,13 @@ static u32 best_seq(u32 a, u32 b)
 
 unsigned sizeof_namespace_label(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	return ndd->nslabel_size;
 }
 
 static size_t __sizeof_namespace_index(u32 nslot)
 {
+	printk(KERN_INFO "%s: ENTRY: nslot=%u\n", __func__, nslot);
 	return ALIGN(sizeof(struct nd_namespace_index) + DIV_ROUND_UP(nslot, 8),
 			NSINDEX_ALIGN);
 }
@@ -56,12 +59,14 @@ static size_t __sizeof_namespace_index(u32 nslot)
 static int __nvdimm_num_label_slots(struct nvdimm_drvdata *ndd,
 		size_t index_size)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, index_size=%zu\n", __func__, ndd, index_size);
 	return (ndd->nsarea.config_size - index_size * 2) /
 			sizeof_namespace_label(ndd);
 }
 
 int nvdimm_num_label_slots(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	u32 tmp_nslot, n;
 
 	tmp_nslot = ndd->nsarea.config_size / sizeof_namespace_label(ndd);
@@ -72,6 +77,7 @@ int nvdimm_num_label_slots(struct nvdimm_drvdata *ndd)
 
 size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	u32 nslot, space, size;
 
 	/*
@@ -93,6 +99,7 @@ size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 
 static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	/*
 	 * On media label format consists of two index blocks followed
 	 * by an array of labels.  None of these structures are ever
