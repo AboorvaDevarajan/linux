@@ -24,30 +24,38 @@ static DEFINE_IDA(dimm_ida);
  */
 int nvdimm_check_config_data(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
 	if (!nvdimm->cmd_mask ||
 	    !test_bit(ND_CMD_GET_CONFIG_DATA, &nvdimm->cmd_mask)) {
-		if (test_bit(NDD_LABELING, &nvdimm->flags))
+		if (test_bit(NDD_LABELING, &nvdimm->flags)) {
+			printk(KERN_INFO "%s: EXIT: -ENXIO (labeling)\n", __func__);
 			return -ENXIO;
-		else
+		} else {
+			printk(KERN_INFO "%s: EXIT: -ENOTTY (no cmd_mask)\n", __func__);
 			return -ENOTTY;
+		}
 	}
-
+	printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 	return 0;
 }
 
 static int validate_dimm(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	int rc;
 
-	if (!ndd)
+	if (!ndd) {
+		printk(KERN_INFO "%s: EXIT: -EINVAL (ndd is NULL)\n", __func__);
 		return -EINVAL;
+	}
 
 	rc = nvdimm_check_config_data(ndd->dev);
 	if (rc)
 		dev_dbg(ndd->dev, "%ps: %s error: %d\n",
 				__builtin_return_address(0), __func__, rc);
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
