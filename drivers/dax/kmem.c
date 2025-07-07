@@ -31,6 +31,7 @@ static bool any_hotremove_failed;
 
 static int dax_kmem_range(struct dev_dax *dev_dax, int i, struct range *r)
 {
+	printk(KERN_INFO "%s: ENTRY: dev_dax=%p, i=%d, r=%p pid=%d\n", __func__, dev_dax, i, r, current->pid);
 	struct dev_dax_range *dax_range = &dev_dax->ranges[i];
 	struct range *range = &dax_range->range;
 
@@ -40,8 +41,10 @@ static int dax_kmem_range(struct dev_dax *dev_dax, int i, struct range *r)
 	if (r->start >= r->end) {
 		r->start = range->start;
 		r->end = range->end;
+		printk(KERN_INFO "%s: EXIT: -ENOSPC pid=%d\n", __func__, current->pid);
 		return -ENOSPC;
 	}
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
@@ -56,18 +59,24 @@ static LIST_HEAD(kmem_memory_types);
 
 static struct memory_dev_type *kmem_find_alloc_memory_type(int adist)
 {
+	printk(KERN_INFO "%s: ENTRY: adist=%d pid=%d\n", __func__, adist, current->pid);
 	guard(mutex)(&kmem_memory_type_lock);
-	return mt_find_alloc_memory_type(adist, &kmem_memory_types);
+	struct memory_dev_type *ret = mt_find_alloc_memory_type(adist, &kmem_memory_types);
+	printk(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static void kmem_put_memory_types(void)
 {
+	printk(KERN_INFO "%s: ENTRY pid=%d\n", __func__, current->pid);
 	guard(mutex)(&kmem_memory_type_lock);
 	mt_put_memory_types(&kmem_memory_types);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static int dev_dax_kmem_probe(struct dev_dax *dev_dax)
 {
+	printk(KERN_INFO "%s: ENTRY: dev_dax=%p pid=%d\n", __func__, dev_dax, current->pid);
 	struct device *dev = &dev_dax->dev;
 	unsigned long total_len = 0, orig_len = 0;
 	struct dax_kmem_data *data;
@@ -87,13 +96,16 @@ static int dev_dax_kmem_probe(struct dev_dax *dev_dax)
 	if (numa_node < 0) {
 		dev_warn(dev, "rejecting DAX region with invalid node: %d\n",
 				numa_node);
+		printk(KERN_INFO "%s: EXIT: -EINVAL (invalid node) pid=%d\n", __func__, current->pid);
 		return -EINVAL;
 	}
 
 	mt_calc_adistance(numa_node, &adist);
 	mtype = kmem_find_alloc_memory_type(adist);
-	if (IS_ERR(mtype))
+	if (IS_ERR(mtype)) {
+		printk(KERN_INFO "%s: EXIT: PTR_ERR(mtype)=%ld pid=%d\n", __func__, PTR_ERR(mtype), current->pid);
 		return PTR_ERR(mtype);
+	}
 
 	for (i = 0; i < dev_dax->nr_range; i++) {
 		struct range range;
@@ -110,6 +122,7 @@ static int dev_dax_kmem_probe(struct dev_dax *dev_dax)
 
 	if (!total_len) {
 		dev_warn(dev, "rejecting DAX region without any memory after alignment\n");
+		printk(KERN_INFO "%s: EXIT: -EINVAL (no memory after alignment) pid=%d\n", __func__, current->pid);
 		return -EINVAL;
 	} else if (total_len != orig_len) {
 		char buf[16];
@@ -193,6 +206,7 @@ static int dev_dax_kmem_probe(struct dev_dax *dev_dax)
 
 	dev_set_drvdata(dev, data);
 
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 
 err_request_mem:
@@ -203,12 +217,14 @@ err_res_name:
 	kfree(data);
 err_dax_kmem_data:
 	clear_node_memory_type(numa_node, mtype);
+	printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 
 #ifdef CONFIG_MEMORY_HOTREMOVE
 static void dev_dax_kmem_remove(struct dev_dax *dev_dax)
 {
+	printk(KERN_INFO "%s: ENTRY: dev_dax=%p pid=%d\n", __func__, dev_dax, current->pid);
 	int i, success = 0;
 	int node = dev_dax->target_node;
 	struct device *dev = &dev_dax->dev;
@@ -256,10 +272,12 @@ static void dev_dax_kmem_remove(struct dev_dax *dev_dax)
 		 */
 		clear_node_memory_type(node, NULL);
 	}
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 #else
 static void dev_dax_kmem_remove(struct dev_dax *dev_dax)
 {
+	printk(KERN_INFO "%s: ENTRY: dev_dax=%p pid=%d\n", __func__, dev_dax, current->pid);
 	/*
 	 * Without hotremove purposely leak the request_mem_region() for the
 	 * device-dax range and return '0' to ->remove() attempts. The removal
@@ -268,6 +286,7 @@ static void dev_dax_kmem_remove(struct dev_dax *dev_dax)
 	 * request_mem_region().
 	 */
 	any_hotremove_failed = true;
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 #endif /* CONFIG_MEMORY_HOTREMOVE */
 
@@ -279,17 +298,23 @@ static struct dax_device_driver device_dax_kmem_driver = {
 
 static int __init dax_kmem_init(void)
 {
+	printk(KERN_INFO "%s: ENTRY pid=%d\n", __func__, current->pid);
 	int rc;
 
 	/* Resource name is permanently allocated if any hotremove fails. */
 	kmem_name = kstrdup_const("System RAM (kmem)", GFP_KERNEL);
-	if (!kmem_name)
+	if (!kmem_name) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
+	}
 
 	rc = dax_driver_register(&device_dax_kmem_driver);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (dax_driver_register failed) pid=%d\n", __func__, rc, current->pid);
 		goto error_dax_driver;
+	}
 
+	printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
 	return rc;
 
 error_dax_driver:
@@ -300,10 +325,12 @@ error_dax_driver:
 
 static void __exit dax_kmem_exit(void)
 {
+	printk(KERN_INFO "%s: ENTRY pid=%d\n", __func__, current->pid);
 	dax_driver_unregister(&device_dax_kmem_driver);
 	if (!any_hotremove_failed)
 		kfree_const(kmem_name);
 	kmem_put_memory_types();
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 MODULE_AUTHOR("Intel Corporation");

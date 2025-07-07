@@ -21,29 +21,29 @@ DEFINE_MUTEX(nvdimm_bus_list_mutex);
 
 void nvdimm_bus_lock(struct device *dev)
 {
-	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 
 	if (!nvdimm_bus) {
-		printk(KERN_INFO "%s: EXIT: nvdimm_bus is NULL\n", __func__);
+		printk(KERN_INFO "%s: EXIT: nvdimm_bus is NULL pid=%d\n", __func__, current->pid);
 		return;
 	}
 	mutex_lock(&nvdimm_bus->reconfig_mutex);
-	printk(KERN_INFO "%s: EXIT\n", __func__);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 EXPORT_SYMBOL(nvdimm_bus_lock);
 
 void nvdimm_bus_unlock(struct device *dev)
 {
-	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 
 	if (!nvdimm_bus) {
-		printk(KERN_INFO "%s: EXIT: nvdimm_bus is NULL\n", __func__);
+		printk(KERN_INFO "%s: EXIT: nvdimm_bus is NULL pid=%d\n", __func__, current->pid);
 		return;
 	}
 	mutex_unlock(&nvdimm_bus->reconfig_mutex);
-	printk(KERN_INFO "%s: EXIT\n", __func__);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 EXPORT_SYMBOL(nvdimm_bus_unlock);
 
@@ -85,7 +85,7 @@ static struct nvdimm_map *find_nvdimm_map(struct device *dev,
 static struct nvdimm_map *alloc_nvdimm_map(struct device *dev,
 		resource_size_t offset, size_t size, unsigned long flags)
 {
-	printk(KERN_INFO "%s: ENTRY: dev=%p, offset=%pa, size=%zu, flags=0x%lx\n", __func__, dev, &offset, size, flags);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, offset=%pa, size=%zu, flags=0x%lx pid=%d\n", __func__, dev, &offset, size, flags, current->pid);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nvdimm_map *nvdimm_map;
 
@@ -112,7 +112,7 @@ static struct nvdimm_map *alloc_nvdimm_map(struct device *dev,
 		nvdimm_map->iomem = ioremap(offset, size);
 
 	if (!nvdimm_map->mem) {
-		printk(KERN_INFO "%s: EXIT: memremap/ioremap failed\n", __func__);
+		printk(KERN_INFO "%s: EXIT: memremap/ioremap failed pid=%d\n", __func__, current->pid);
 		goto err_map;
 	}
 
@@ -120,20 +120,20 @@ static struct nvdimm_map *alloc_nvdimm_map(struct device *dev,
 			__func__);
 	list_add(&nvdimm_map->list, &nvdimm_bus->mapping_list);
 
-	printk(KERN_INFO "%s: EXIT: nvdimm_map=%p\n", __func__, nvdimm_map);
+	printk(KERN_INFO "%s: EXIT: nvdimm_map=%p pid=%d\n", __func__, nvdimm_map, current->pid);
 	return nvdimm_map;
 
  err_map:
 	release_mem_region(offset, size);
  err_request_region:
 	kfree(nvdimm_map);
-	printk(KERN_INFO "%s: EXIT: returning NULL\n", __func__);
+	printk(KERN_INFO "%s: EXIT: returning NULL pid=%d\n", __func__, current->pid);
 	return NULL;
 }
 
 static void nvdimm_map_release(struct kref *kref)
 {
-	printk(KERN_INFO "%s: ENTRY: kref=%p\n", __func__, kref);
+	printk(KERN_INFO "%s: ENTRY: kref=%p pid=%d\n", __func__, kref, current->pid);
 	struct nvdimm_bus *nvdimm_bus;
 	struct nvdimm_map *nvdimm_map;
 
@@ -148,7 +148,7 @@ static void nvdimm_map_release(struct kref *kref)
 		iounmap(nvdimm_map->iomem);
 	release_mem_region(nvdimm_map->offset, nvdimm_map->size);
 	kfree(nvdimm_map);
-	printk(KERN_INFO "%s: EXIT\n", __func__);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void nvdimm_map_put(void *data)
@@ -171,7 +171,7 @@ static void nvdimm_map_put(void *data)
 void *devm_nvdimm_memremap(struct device *dev, resource_size_t offset,
 		size_t size, unsigned long flags)
 {
-	printk(KERN_INFO "%s: ENTRY: dev=%p, offset=%pa, size=%zu, flags=0x%lx\n", __func__, dev, &offset, size, flags);
+	printk(KERN_INFO "%s: ENTRY: dev=%p, offset=%pa, size=%zu, flags=0x%lx pid=%d\n", __func__, dev, &offset, size, flags, current->pid);
 	struct nvdimm_map *nvdimm_map;
 
 	nvdimm_bus_lock(dev);
@@ -183,16 +183,16 @@ void *devm_nvdimm_memremap(struct device *dev, resource_size_t offset,
 	nvdimm_bus_unlock(dev);
 
 	if (!nvdimm_map) {
-		printk(KERN_INFO "%s: EXIT: nvdimm_map is NULL\n", __func__);
+		printk(KERN_INFO "%s: EXIT: nvdimm_map is NULL pid=%d\n", __func__, current->pid);
 		return NULL;
 	}
 
 	if (devm_add_action_or_reset(dev, nvdimm_map_put, nvdimm_map)) {
-		printk(KERN_INFO "%s: EXIT: devm_add_action_or_reset failed\n", __func__);
+		printk(KERN_INFO "%s: EXIT: devm_add_action_or_reset failed pid=%d\n", __func__, current->pid);
 		return NULL;
 	}
 
-	printk(KERN_INFO "%s: EXIT: mem=%p\n", __func__, nvdimm_map->mem);
+	printk(KERN_INFO "%s: EXIT: mem=%p pid=%d\n", __func__, nvdimm_map->mem, current->pid);
 	return nvdimm_map->mem;
 }
 EXPORT_SYMBOL_GPL(devm_nvdimm_memremap);
@@ -524,43 +524,43 @@ const struct attribute_group *nvdimm_bus_attribute_groups[] = {
 
 int nvdimm_bus_add_badrange(struct nvdimm_bus *nvdimm_bus, u64 addr, u64 length)
 {
-	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, addr=0x%llx, length=0x%llx\n", __func__, nvdimm_bus, addr, length);
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, addr=0x%llx, length=0x%llx pid=%d\n", __func__, nvdimm_bus, addr, length, current->pid);
 	int ret = badrange_add(&nvdimm_bus->badrange, addr, length);
-	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_bus_add_badrange);
 
 static __init int libnvdimm_init(void)
 {
-	printk(KERN_INFO "%s: ENTRY\n", __func__);
+	printk(KERN_INFO "%s: ENTRY pid=%d\n", __func__, current->pid);
 	int rc;
 
 	rc = nvdimm_bus_init();
 	if (rc) {
-		printk(KERN_INFO "%s: EXIT: nvdimm_bus_init failed rc=%d\n", __func__, rc);
+		printk(KERN_INFO "%s: EXIT: nvdimm_bus_init failed rc=%d pid=%d\n", __func__, rc, current->pid);
 		return rc;
 	}
 	rc = nvdimm_init();
 	if (rc) {
-		printk(KERN_INFO "%s: EXIT: nvdimm_init failed rc=%d\n", __func__, rc);
+		printk(KERN_INFO "%s: EXIT: nvdimm_init failed rc=%d pid=%d\n", __func__, rc, current->pid);
 		goto err_dimm;
 	}
 	rc = nd_region_init();
 	if (rc) {
-		printk(KERN_INFO "%s: EXIT: nd_region_init failed rc=%d\n", __func__, rc);
+		printk(KERN_INFO "%s: EXIT: nd_region_init failed rc=%d pid=%d\n", __func__, rc, current->pid);
 		goto err_region;
 	}
 
 	nd_label_init();
 
-	printk(KERN_INFO "%s: EXIT: success\n", __func__);
+	printk(KERN_INFO "%s: EXIT: success pid=%d\n", __func__, current->pid);
 	return 0;
  err_region:
 	nvdimm_exit();
  err_dimm:
 	nvdimm_bus_exit();
-	printk(KERN_INFO "%s: EXIT: error rc=%d\n", __func__, rc);
+	printk(KERN_INFO "%s: EXIT: error rc=%d pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 
