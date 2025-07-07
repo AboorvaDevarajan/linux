@@ -584,89 +584,83 @@ static ssize_t read_only_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(read_only);
 
-static ssize_t align_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t align_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	return sprintf(buf, "%#lx\n", nd_region->align);
+	ssize_t ret = sprintf(buf, "%#lx\n", nd_region->align);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 
-static ssize_t align_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t len)
+static ssize_t align_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu\n", __func__, dev, attr, buf, len);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long val, dpa;
 	u32 mappings, remainder;
 	int rc;
 
 	rc = kstrtoul(buf, 0, &val);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtoul failed)\n", __func__, rc);
 		return rc;
+	}
 
-	/*
-	 * Ensure space-align is evenly divisible by the region
-	 * interleave-width because the kernel typically has no facility
-	 * to determine which DIMM(s), dimm-physical-addresses, would
-	 * contribute to the tail capacity in system-physical-address
-	 * space for the namespace.
-	 */
 	mappings = max_t(u32, 1, nd_region->ndr_mappings);
 	dpa = div_u64_rem(val, mappings, &remainder);
-	if (!is_power_of_2(dpa) || dpa < PAGE_SIZE
-			|| val > region_size(nd_region) || remainder)
+	if (!is_power_of_2(dpa) || dpa < PAGE_SIZE || val > region_size(nd_region) || remainder) {
+		printk(KERN_INFO "%s: EXIT: -EINVAL (invalid alignment)\n", __func__);
 		return -EINVAL;
+	}
 
-	/*
-	 * Given that space allocation consults this value multiple
-	 * times ensure it does not change for the duration of the
-	 * allocation.
-	 */
 	nvdimm_bus_lock(dev);
 	nd_region->align = val;
 	nvdimm_bus_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: len=%zu\n", __func__, len);
 	return len;
 }
 static DEVICE_ATTR_RW(align);
 
-static ssize_t region_badblocks_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t region_badblocks_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
-
 	device_lock(dev);
 	if (dev->driver)
 		rc = badblocks_show(&nd_region->bb, buf, 0);
 	else
 		rc = -ENXIO;
 	device_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR(badblocks, 0444, region_badblocks_show, NULL);
 
-static ssize_t resource_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t resource_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	return sprintf(buf, "%#llx\n", nd_region->ndr_start);
+	ssize_t ret = sprintf(buf, "%#llx\n", nd_region->ndr_start);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_ADMIN_RO(resource);
 
-static ssize_t persistence_domain_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t persistence_domain_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
+	ssize_t ret;
 	if (test_bit(ND_REGION_PERSIST_CACHE, &nd_region->flags))
-		return sprintf(buf, "cpu_cache\n");
+		ret = sprintf(buf, "cpu_cache\n");
 	else if (test_bit(ND_REGION_PERSIST_MEMCTRL, &nd_region->flags))
-		return sprintf(buf, "memory_controller\n");
+		ret = sprintf(buf, "memory_controller\n");
 	else
-		return sprintf(buf, "\n");
+		ret = sprintf(buf, "\n");
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(persistence_domain);
 
@@ -746,18 +740,20 @@ static umode_t region_visible(struct kobject *kobj, struct attribute *a, int n)
 
 static ssize_t mappingN(struct device *dev, char *buf, int n)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, buf=%p, n=%d\n", __func__, dev, buf, n);
 	struct nd_region *nd_region = to_nd_region(dev);
 	struct nd_mapping *nd_mapping;
 	struct nvdimm *nvdimm;
 
-	if (n >= nd_region->ndr_mappings)
+	if (n >= nd_region->ndr_mappings) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (n >= ndr_mappings)\n", __func__);
 		return -ENXIO;
+	}
 	nd_mapping = &nd_region->mapping[n];
 	nvdimm = nd_mapping->nvdimm;
-
-	return sprintf(buf, "%s,%llu,%llu,%d\n", dev_name(&nvdimm->dev),
-			nd_mapping->start, nd_mapping->size,
-			nd_mapping->position);
+	ssize_t ret = sprintf(buf, "%s,%llu,%llu,%d\n", dev_name(&nvdimm->dev), nd_mapping->start, nd_mapping->size, nd_mapping->position);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 
 #define REGION_MAPPING(idx) \
@@ -883,39 +879,54 @@ static const struct device_type nd_volatile_device_type = {
 
 bool is_nd_pmem(const struct device *dev)
 {
-	return dev ? dev->type == &nd_pmem_device_type : false;
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
+	bool ret = dev ? dev->type == &nd_pmem_device_type : false;
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 bool is_nd_volatile(const struct device *dev)
 {
-	return dev ? dev->type == &nd_volatile_device_type : false;
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
+	bool ret = dev ? dev->type == &nd_volatile_device_type : false;
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
-u64 nd_region_interleave_set_cookie(struct nd_region *nd_region,
-		struct nd_namespace_index *nsindex)
+u64 nd_region_interleave_set_cookie(struct nd_region *nd_region, struct nd_namespace_index *nsindex)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, nsindex=%p\n", __func__, nd_region, nsindex);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 
-	if (!nd_set)
+	if (!nd_set) {
+		printk(KERN_INFO "%s: EXIT: 0 (no nd_set)\n", __func__);
 		return 0;
+	}
 
-	if (nsindex && __le16_to_cpu(nsindex->major) == 1
-			&& __le16_to_cpu(nsindex->minor) == 1)
+	if (nsindex && __le16_to_cpu(nsindex->major) == 1 && __le16_to_cpu(nsindex->minor) == 1) {
+		printk(KERN_INFO "%s: EXIT: cookie1=%llu\n", __func__, nd_set->cookie1);
 		return nd_set->cookie1;
+	}
+	printk(KERN_INFO "%s: EXIT: cookie2=%llu\n", __func__, nd_set->cookie2);
 	return nd_set->cookie2;
 }
 
 u64 nd_region_interleave_set_altcookie(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 
-	if (nd_set)
+	if (nd_set) {
+		printk(KERN_INFO "%s: EXIT: altcookie=%llu\n", __func__, nd_set->altcookie);
 		return nd_set->altcookie;
+	}
+	printk(KERN_INFO "%s: EXIT: 0 (no nd_set)\n", __func__);
 	return 0;
 }
 
 void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_mapping=%p\n", __func__, nd_mapping);
 	struct nd_label_ent *label_ent, *e;
 
 	lockdep_assert_held(&nd_mapping->lock);
@@ -923,6 +934,7 @@ void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
 		list_del(&label_ent->list);
 		kfree(label_ent);
 	}
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 /*
@@ -931,6 +943,7 @@ void nd_mapping_free_labels(struct nd_mapping *nd_mapping)
  */
 void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, dev=%p\n", __func__, nd_region, dev);
 	nvdimm_bus_lock(dev);
 	if (nd_region->ns_seed == dev) {
 		nd_region_create_ns_seed(nd_region);
@@ -957,6 +970,7 @@ void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
 			nd_region_create_ns_seed(nd_region);
 	}
 	nvdimm_bus_unlock(dev);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 /**
@@ -978,6 +992,7 @@ void nd_region_advance_seeds(struct nd_region *nd_region, struct device *dev)
  */
 unsigned int nd_region_acquire_lane(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	unsigned int cpu, lane;
 
 	migrate_disable();
@@ -993,12 +1008,14 @@ unsigned int nd_region_acquire_lane(struct nd_region *nd_region)
 	} else
 		lane = cpu;
 
+	printk(KERN_INFO "%s: EXIT: lane=%u\n", __func__, lane);
 	return lane;
 }
 EXPORT_SYMBOL(nd_region_acquire_lane);
 
 void nd_region_release_lane(struct nd_region *nd_region, unsigned int lane)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, lane=%u\n", __func__, nd_region, lane);
 	if (nd_region->num_lanes < nr_cpu_ids) {
 		unsigned int cpu = smp_processor_id();
 		struct nd_percpu_lane *ndl_lock, *ndl_count;
@@ -1009,6 +1026,7 @@ void nd_region_release_lane(struct nd_region *nd_region, unsigned int lane)
 			spin_unlock(&ndl_lock->lock);
 	}
 	migrate_enable();
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL(nd_region_release_lane);
 
@@ -1020,6 +1038,7 @@ EXPORT_SYMBOL(nd_region_release_lane);
 
 static unsigned long default_align(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	unsigned long align;
 	u32 remainder;
 	int mappings;
@@ -1033,15 +1052,15 @@ static unsigned long default_align(struct nd_region *nd_region)
 	if (remainder)
 		align *= mappings;
 
+	printk(KERN_INFO "%s: EXIT: align=%lu\n", __func__, align);
 	return align;
 }
 
 static struct lock_class_key nvdimm_region_key;
 
-static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus,
-		struct nd_region_desc *ndr_desc,
-		const struct device_type *dev_type, const char *caller)
+static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc, const struct device_type *dev_type, const char *caller)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p, dev_type=%p, caller=%s\n", __func__, nvdimm_bus, ndr_desc, dev_type, caller);
 	struct nd_region *nd_region;
 	struct device *dev;
 	unsigned int i;
@@ -1067,8 +1086,10 @@ static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus,
 		kzalloc(struct_size(nd_region, mapping, ndr_desc->num_mappings),
 			GFP_KERNEL);
 
-	if (!nd_region)
+	if (!nd_region) {
+		printk(KERN_INFO "%s: EXIT: NULL (kzalloc failed)\n", __func__);
 		return NULL;
+	}
 	nd_region->ndr_mappings = ndr_desc->num_mappings;
 	/* CXL pre-assigns memregion ids before creating nvdimm regions */
 	if (test_bit(ND_REGION_CXL, &ndr_desc->flags)) {
@@ -1080,8 +1101,10 @@ static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus,
 	}
 
 	nd_region->lane = alloc_percpu(struct nd_percpu_lane);
-	if (!nd_region->lane)
+	if (!nd_region->lane) {
+		printk(KERN_INFO "%s: EXIT: NULL (alloc_percpu failed)\n", __func__);
 		goto err_percpu;
+	}
 
         for (i = 0; i < nr_cpu_ids; i++) {
 		struct nd_percpu_lane *ndl;
@@ -1140,36 +1163,42 @@ err_percpu:
 		memregion_free(nd_region->id);
 err_id:
 	kfree(nd_region);
+	printk(KERN_INFO "%s: EXIT: NULL (error path)\n", __func__);
 	return NULL;
 }
 
-struct nd_region *nvdimm_pmem_region_create(struct nvdimm_bus *nvdimm_bus,
-		struct nd_region_desc *ndr_desc)
+struct nd_region *nvdimm_pmem_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p\n", __func__, nvdimm_bus, ndr_desc);
 	ndr_desc->num_lanes = ND_MAX_LANES;
-	return nd_region_create(nvdimm_bus, ndr_desc, &nd_pmem_device_type,
-			__func__);
+	struct nd_region *ret = nd_region_create(nvdimm_bus, ndr_desc, &nd_pmem_device_type, __func__);
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_pmem_region_create);
 
-struct nd_region *nvdimm_volatile_region_create(struct nvdimm_bus *nvdimm_bus,
-		struct nd_region_desc *ndr_desc)
+struct nd_region *nvdimm_volatile_region_create(struct nvdimm_bus *nvdimm_bus, struct nd_region_desc *ndr_desc)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p, ndr_desc=%p\n", __func__, nvdimm_bus, ndr_desc);
 	ndr_desc->num_lanes = ND_MAX_LANES;
-	return nd_region_create(nvdimm_bus, ndr_desc, &nd_volatile_device_type,
-			__func__);
+	struct nd_region *ret = nd_region_create(nvdimm_bus, ndr_desc, &nd_volatile_device_type, __func__);
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_volatile_region_create);
 
 void nvdimm_region_delete(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	if (nd_region)
 		nd_device_unregister(&nd_region->dev, ND_SYNC);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 EXPORT_SYMBOL_GPL(nvdimm_region_delete);
 
 int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, bio=%p\n", __func__, nd_region, bio);
 	int rc = 0;
 
 	if (!nd_region->flush)
@@ -1178,7 +1207,7 @@ int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
 		if (nd_region->flush(nd_region, bio))
 			rc = -EIO;
 	}
-
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 /**
@@ -1187,29 +1216,20 @@ int nvdimm_flush(struct nd_region *nd_region, struct bio *bio)
  */
 int generic_nvdimm_flush(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	struct nd_region_data *ndrd = dev_get_drvdata(&nd_region->dev);
 	int i, idx;
 
-	/*
-	 * Try to encourage some diversity in flush hint addresses
-	 * across cpus assuming a limited number of flush hints.
-	 */
 	idx = this_cpu_read(flush_idx);
 	idx = this_cpu_add_return(flush_idx, hash_32(current->pid + idx, 8));
 
-	/*
-	 * The pmem_wmb() is needed to 'sfence' all
-	 * previous writes such that they are architecturally visible for
-	 * the platform buffer flush. Note that we've already arranged for pmem
-	 * writes to avoid the cache via memcpy_flushcache().  The final
-	 * wmb() ensures ordering for the NVDIMM flush write.
-	 */
 	pmem_wmb();
 	for (i = 0; i < nd_region->ndr_mappings; i++)
 		if (ndrd_get_flush_wpq(ndrd, i, 0))
 			writeq(1, ndrd_get_flush_wpq(ndrd, i, idx));
 	wmb();
 
+	printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvdimm_flush);
@@ -1224,49 +1244,53 @@ EXPORT_SYMBOL_GPL(nvdimm_flush);
  */
 int nvdimm_has_flush(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	int i;
 
-	/* no nvdimm or pmem api == flushing capability unknown */
-	if (nd_region->ndr_mappings == 0
-			|| !IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API))
+	if (nd_region->ndr_mappings == 0 || !IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API)) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (no mappings or no PMEM API)\n", __func__);
 		return -ENXIO;
+	}
 
-	/* Test if an explicit flush function is defined */
-	if (test_bit(ND_REGION_ASYNC, &nd_region->flags) && nd_region->flush)
+	if (test_bit(ND_REGION_ASYNC, &nd_region->flags) && nd_region->flush) {
+		printk(KERN_INFO "%s: EXIT: 1 (async+flush)\n", __func__);
 		return 1;
+	}
 
-	/* Test if any flush hints for the region are available */
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
 		struct nvdimm *nvdimm = nd_mapping->nvdimm;
 
-		/* flush hints present / available */
-		if (nvdimm->num_flush)
+		if (nvdimm->num_flush) {
+			printk(KERN_INFO "%s: EXIT: 1 (num_flush)\n", __func__);
 			return 1;
+		}
 	}
 
-	/*
-	 * The platform defines dimm devices without hints nor explicit flush,
-	 * assume platform persistence mechanism like ADR
-	 */
+	printk(KERN_INFO "%s: EXIT: 0 (platform persistence)\n", __func__);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvdimm_has_flush);
 
 int nvdimm_has_cache(struct nd_region *nd_region)
 {
-	return is_nd_pmem(&nd_region->dev) &&
-		!test_bit(ND_REGION_PERSIST_CACHE, &nd_region->flags);
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
+	int ret = is_nd_pmem(&nd_region->dev) && !test_bit(ND_REGION_PERSIST_CACHE, &nd_region->flags);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvdimm_has_cache);
 
 bool is_nvdimm_sync(struct nd_region *nd_region)
 {
-	if (is_nd_volatile(&nd_region->dev))
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
+	if (is_nd_volatile(&nd_region->dev)) {
+		printk(KERN_INFO "%s: EXIT: true (volatile)\n", __func__);
 		return true;
-
-	return is_nd_pmem(&nd_region->dev) &&
-		!test_bit(ND_REGION_ASYNC, &nd_region->flags);
+	}
+	bool ret = is_nd_pmem(&nd_region->dev) && !test_bit(ND_REGION_ASYNC, &nd_region->flags);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(is_nvdimm_sync);
 
