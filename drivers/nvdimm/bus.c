@@ -730,6 +730,19 @@ static ssize_t devtype_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(devtype);
 
+static struct attribute *nd_device_attributes[] = {
+	&dev_attr_modalias.attr,
+	&dev_attr_devtype.attr,
+	NULL,
+};
+/*
+ * nd_device_attribute_group - generic attributes for all devices on an nd bus
+ */
+const struct attribute_group nd_device_attribute_group = {
+	.attrs = nd_device_attributes,
+};
+
+
 static ssize_t numa_node_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
