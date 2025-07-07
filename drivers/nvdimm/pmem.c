@@ -34,36 +34,48 @@
 
 static struct device *to_dev(struct pmem_device *pmem)
 {
-	/*
-	 * nvdimm bus services need a 'dev' parameter, and we record the device
-	 * at init in bb.dev.
-	 */
-	return pmem->bb.dev;
+	printk(KERN_INFO "%s: ENTRY: pmem=%p pid=%d\n", __func__, pmem, current->pid);
+	struct device *ret = pmem->bb.dev;
+	printk(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static struct nd_region *to_region(struct pmem_device *pmem)
 {
-	return to_nd_region(to_dev(pmem)->parent);
+	printk(KERN_INFO "%s: ENTRY: pmem=%p pid=%d\n", __func__, pmem, current->pid);
+	struct nd_region *ret = to_nd_region(to_dev(pmem)->parent);
+	printk(KERN_INFO "%s: EXIT: ret=%p pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static phys_addr_t pmem_to_phys(struct pmem_device *pmem, phys_addr_t offset)
 {
-	return pmem->phys_addr + offset;
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, offset=%pa pid=%d\n", __func__, pmem, &offset, current->pid);
+	phys_addr_t ret = pmem->phys_addr + offset;
+	printk(KERN_INFO "%s: EXIT: ret=%pa pid=%d\n", __func__, &ret, current->pid);
+	return ret;
 }
 
 static sector_t to_sect(struct pmem_device *pmem, phys_addr_t offset)
 {
-	return (offset - pmem->data_offset) >> SECTOR_SHIFT;
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, offset=%pa pid=%d\n", __func__, pmem, &offset, current->pid);
+	sector_t ret = (offset - pmem->data_offset) >> SECTOR_SHIFT;
+	printk(KERN_INFO "%s: EXIT: ret=%llu pid=%d\n", __func__, (unsigned long long)ret, current->pid);
+	return ret;
 }
 
 static phys_addr_t to_offset(struct pmem_device *pmem, sector_t sector)
 {
-	return (sector << SECTOR_SHIFT) + pmem->data_offset;
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, sector=%llu pid=%d\n", __func__, pmem, (unsigned long long)sector, current->pid);
+	phys_addr_t ret = (sector << SECTOR_SHIFT) + pmem->data_offset;
+	printk(KERN_INFO "%s: EXIT: ret=%pa pid=%d\n", __func__, &ret, current->pid);
+	return ret;
 }
 
 static void pmem_mkpage_present(struct pmem_device *pmem, phys_addr_t offset,
 		unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, offset=%pa, len=%u pid=%d\n", __func__, pmem, &offset, len, current->pid);
 	phys_addr_t phys = pmem_to_phys(pmem, offset);
 	unsigned long pfn_start, pfn_end, pfn;
 
@@ -84,20 +96,24 @@ static void pmem_mkpage_present(struct pmem_device *pmem, phys_addr_t offset,
 		if (test_and_clear_pmem_poison(page))
 			clear_mce_nospec(pfn);
 	}
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void pmem_clear_bb(struct pmem_device *pmem, sector_t sector, long blks)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, sector=%llu, blks=%ld pid=%d\n", __func__, pmem, (unsigned long long)sector, blks, current->pid);
 	if (blks == 0)
 		return;
 	badblocks_clear(&pmem->bb, sector, blks);
 	if (pmem->bb_state)
 		sysfs_notify_dirent(pmem->bb_state);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static long __pmem_clear_poison(struct pmem_device *pmem,
 		phys_addr_t offset, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, offset=%pa, len=%u pid=%d\n", __func__, pmem, &offset, len, current->pid);
 	phys_addr_t phys = pmem_to_phys(pmem, offset);
 	long cleared = nvdimm_clear_poison(to_dev(pmem), phys, len);
 
@@ -105,26 +121,34 @@ static long __pmem_clear_poison(struct pmem_device *pmem,
 		pmem_mkpage_present(pmem, offset, cleared);
 		arch_invalidate_pmem(pmem->virt_addr + offset, len);
 	}
+	printk(KERN_INFO "%s: EXIT: cleared=%ld pid=%d\n", __func__, cleared, current->pid);
 	return cleared;
 }
 
 static blk_status_t pmem_clear_poison(struct pmem_device *pmem,
 		phys_addr_t offset, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, offset=%pa, len=%u pid=%d\n", __func__, pmem, &offset, len, current->pid);
 	long cleared = __pmem_clear_poison(pmem, offset, len);
 
-	if (cleared < 0)
+	if (cleared < 0) {
+		printk(KERN_INFO "%s: EXIT: BLK_STS_IOERR pid=%d\n", __func__, current->pid);
 		return BLK_STS_IOERR;
+	}
 
 	pmem_clear_bb(pmem, to_sect(pmem, offset), cleared >> SECTOR_SHIFT);
-	if (cleared < len)
+	if (cleared < len) {
+		printk(KERN_INFO "%s: EXIT: BLK_STS_IOERR pid=%d\n", __func__, current->pid);
 		return BLK_STS_IOERR;
+	}
+	printk(KERN_INFO "%s: EXIT: BLK_STS_OK pid=%d\n", __func__, current->pid);
 	return BLK_STS_OK;
 }
 
 static void write_pmem(void *pmem_addr, struct page *page,
 		unsigned int off, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem_addr=%p, page=%p, off=%u, len=%u pid=%d\n", __func__, pmem_addr, page, off, len, current->pid);
 	unsigned int chunk;
 	void *mem;
 
@@ -138,11 +162,13 @@ static void write_pmem(void *pmem_addr, struct page *page,
 		page++;
 		pmem_addr += chunk;
 	}
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static blk_status_t read_pmem(struct page *page, unsigned int off,
 		void *pmem_addr, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: page=%p, off=%u, pmem_addr=%p, len=%u pid=%d\n", __func__, page, off, pmem_addr, len, current->pid);
 	unsigned int chunk;
 	unsigned long rem;
 	void *mem;
@@ -159,6 +185,7 @@ static blk_status_t read_pmem(struct page *page, unsigned int off,
 		page++;
 		pmem_addr += chunk;
 	}
+	printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
 	return BLK_STS_OK;
 }
 
@@ -166,6 +193,7 @@ static blk_status_t pmem_do_read(struct pmem_device *pmem,
 			struct page *page, unsigned int page_off,
 			sector_t sector, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, page=%p, page_off=%u, sector=%llu, len=%u pid=%d\n", __func__, pmem, page, page_off, (unsigned long long)sector, len, current->pid);
 	blk_status_t rc;
 	phys_addr_t pmem_off = to_offset(pmem, sector);
 	void *pmem_addr = pmem->virt_addr + pmem_off;
@@ -175,6 +203,7 @@ static blk_status_t pmem_do_read(struct pmem_device *pmem,
 
 	rc = read_pmem(page, page_off, pmem_addr, len);
 	flush_dcache_page(page);
+	printk(KERN_INFO "%s: EXIT: rc=%d pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 
@@ -182,24 +211,29 @@ static blk_status_t pmem_do_write(struct pmem_device *pmem,
 			struct page *page, unsigned int page_off,
 			sector_t sector, unsigned int len)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, page=%p, page_off=%u, sector=%llu, len=%u pid=%d\n", __func__, pmem, page, page_off, (unsigned long long)sector, len, current->pid);
 	phys_addr_t pmem_off = to_offset(pmem, sector);
 	void *pmem_addr = pmem->virt_addr + pmem_off;
 
 	if (unlikely(is_bad_pmem(&pmem->bb, sector, len))) {
 		blk_status_t rc = pmem_clear_poison(pmem, pmem_off, len);
 
-		if (rc != BLK_STS_OK)
+		if (rc != BLK_STS_OK) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (clear poison failed) pid=%d\n", __func__, rc, current->pid);
 			return rc;
+		}
 	}
 
 	flush_dcache_page(page);
 	write_pmem(pmem_addr, page, page_off, len);
 
+	printk(KERN_INFO "%s: EXIT: BLK_STS_OK pid=%d\n", __func__, current->pid);
 	return BLK_STS_OK;
 }
 
 static void pmem_submit_bio(struct bio *bio)
 {
+	printk(KERN_INFO "%s: ENTRY: bio=%p pid=%d\n", __func__, bio, current->pid);
 	int ret = 0;
 	blk_status_t rc = 0;
 	bool do_acct;
@@ -237,6 +271,7 @@ static void pmem_submit_bio(struct bio *bio)
 		bio->bi_status = errno_to_blk_status(ret);
 
 	bio_endio(bio);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 /* see "strong" declaration in tools/testing/nvdimm/pmem-dax.c */
@@ -244,6 +279,7 @@ __weak long __pmem_direct_access(struct pmem_device *pmem, pgoff_t pgoff,
 		long nr_pages, enum dax_access_mode mode, void **kaddr,
 		pfn_t *pfn)
 {
+	printk(KERN_INFO "%s: ENTRY: pmem=%p, pgoff=%lu, nr_pages=%ld, mode=%d, kaddr=%p, pfn=%p pid=%d\n", __func__, pmem, pgoff, nr_pages, mode, kaddr, pfn, current->pid);
 	resource_size_t offset = PFN_PHYS(pgoff) + pmem->data_offset;
 	sector_t sector = PFN_PHYS(pgoff) >> SECTOR_SHIFT;
 	unsigned int num = PFN_PHYS(nr_pages) >> SECTOR_SHIFT;
@@ -294,20 +330,24 @@ static const struct block_device_operations pmem_fops = {
 static int pmem_dax_zero_page_range(struct dax_device *dax_dev, pgoff_t pgoff,
 				    size_t nr_pages)
 {
+	printk(KERN_INFO "%s: ENTRY: dax_dev=%p, pgoff=%lu, nr_pages=%zu pid=%d\n", __func__, dax_dev, pgoff, nr_pages, current->pid);
 	struct pmem_device *pmem = dax_get_private(dax_dev);
-
-	return blk_status_to_errno(pmem_do_write(pmem, ZERO_PAGE(0), 0,
+	int ret = blk_status_to_errno(pmem_do_write(pmem, ZERO_PAGE(0), 0,
 				   PFN_PHYS(pgoff) >> SECTOR_SHIFT,
 				   PAGE_SIZE));
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static long pmem_dax_direct_access(struct dax_device *dax_dev,
 		pgoff_t pgoff, long nr_pages, enum dax_access_mode mode,
 		void **kaddr, pfn_t *pfn)
 {
+	printk(KERN_INFO "%s: ENTRY: dax_dev=%p, pgoff=%lu, nr_pages=%ld, mode=%d, kaddr=%p, pfn=%p pid=%d\n", __func__, dax_dev, pgoff, nr_pages, mode, kaddr, pfn, current->pid);
 	struct pmem_device *pmem = dax_get_private(dax_dev);
-
-	return __pmem_direct_access(pmem, pgoff, nr_pages, mode, kaddr, pfn);
+	long ret = __pmem_direct_access(pmem, pgoff, nr_pages, mode, kaddr, pfn);
+	printk(KERN_INFO "%s: EXIT: ret=%ld pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 /*
@@ -326,6 +366,7 @@ static long pmem_dax_direct_access(struct dax_device *dax_dev,
 static size_t pmem_recovery_write(struct dax_device *dax_dev, pgoff_t pgoff,
 		void *addr, size_t bytes, struct iov_iter *i)
 {
+	printk(KERN_INFO "%s: ENTRY: dax_dev=%p, pgoff=%lu, addr=%p, bytes=%zu, i=%p pid=%d\n", __func__, dax_dev, pgoff, addr, bytes, i, current->pid);
 	struct pmem_device *pmem = dax_get_private(dax_dev);
 	size_t olen, len, off;
 	phys_addr_t pmem_off;
@@ -362,6 +403,7 @@ static size_t pmem_recovery_write(struct dax_device *dax_dev, pgoff_t pgoff,
 	olen = _copy_from_iter_flushcache(addr, bytes, i);
 	pmem_clear_bb(pmem, to_sect(pmem, pmem_off), cleared >> SECTOR_SHIFT);
 
+	printk(KERN_INFO "%s: EXIT: olen=%zu pid=%d\n", __func__, olen, current->pid);
 	return olen;
 }
 
@@ -374,32 +416,38 @@ static const struct dax_operations pmem_dax_ops = {
 static ssize_t write_cache_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct pmem_device *pmem = dev_to_disk(dev)->private_data;
-
-	return sprintf(buf, "%d\n", !!dax_write_cache_enabled(pmem->dax_dev));
+	ssize_t ret = sprintf(buf, "%d\n", !!dax_write_cache_enabled(pmem->dax_dev));
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static ssize_t write_cache_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
 	struct pmem_device *pmem = dev_to_disk(dev)->private_data;
 	bool write_cache;
-	int rc;
-
-	rc = kstrtobool(buf, &write_cache);
-	if (rc)
+	int rc = kstrtobool(buf, &write_cache);
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtobool failed) pid=%d\n", __func__, rc, current->pid);
 		return rc;
+	}
 	dax_write_cache(pmem->dax_dev, write_cache);
+	printk(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
 	return len;
 }
 static DEVICE_ATTR_RW(write_cache);
 
 static umode_t dax_visible(struct kobject *kobj, struct attribute *a, int n)
 {
+	printk(KERN_INFO "%s: ENTRY: kobj=%p, a=%p, n=%d pid=%d\n", __func__, kobj, a, n, current->pid);
 #ifndef CONFIG_ARCH_HAS_PMEM_API
 	if (a == &dev_attr_write_cache.attr)
 		return 0;
 #endif
+	printk(KERN_INFO "%s: EXIT: mode=%o pid=%d\n", __func__, a->mode, current->pid);
 	return a->mode;
 }
 
@@ -421,25 +469,26 @@ static const struct attribute_group *pmem_attribute_groups[] = {
 
 static void pmem_release_disk(void *__pmem)
 {
+	printk(KERN_INFO "%s: ENTRY: __pmem=%p pid=%d\n", __func__, __pmem, current->pid);
 	struct pmem_device *pmem = __pmem;
-
 	dax_remove_host(pmem->disk);
 	kill_dax(pmem->dax_dev);
 	put_dax(pmem->dax_dev);
 	del_gendisk(pmem->disk);
-
 	put_disk(pmem->disk);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static int pmem_pagemap_memory_failure(struct dev_pagemap *pgmap,
 		unsigned long pfn, unsigned long nr_pages, int mf_flags)
 {
-	struct pmem_device *pmem =
-			container_of(pgmap, struct pmem_device, pgmap);
+	printk(KERN_INFO "%s: ENTRY: pgmap=%p, pfn=%lu, nr_pages=%lu, mf_flags=%d pid=%d\n", __func__, pgmap, pfn, nr_pages, mf_flags, current->pid);
+	struct pmem_device *pmem = container_of(pgmap, struct pmem_device, pgmap);
 	u64 offset = PFN_PHYS(pfn) - pmem->phys_addr - pmem->data_offset;
 	u64 len = nr_pages << PAGE_SHIFT;
-
-	return dax_holder_notify_failure(pmem->dax_dev, offset, len, mf_flags);
+	int ret = dax_holder_notify_failure(pmem->dax_dev, offset, len, mf_flags);
+	printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static const struct dev_pagemap_ops fsdax_pagemap_ops = {
@@ -449,6 +498,7 @@ static const struct dev_pagemap_ops fsdax_pagemap_ops = {
 static int pmem_attach_disk(struct device *dev,
 		struct nd_namespace_common *ndns)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, ndns=%p pid=%d\n", __func__, dev, ndns, current->pid);
 	struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
 	struct nd_region *nd_region = to_nd_region(dev->parent);
 	struct queue_limits lim = {
@@ -470,8 +520,10 @@ static int pmem_attach_disk(struct device *dev,
 	int rc;
 
 	pmem = devm_kzalloc(dev, sizeof(*pmem), GFP_KERNEL);
-	if (!pmem)
+	if (!pmem) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
+	}
 
 	rc = devm_namespace_enable(dev, ndns, nd_info_block_reserve());
 	if (rc)
@@ -541,6 +593,7 @@ static int pmem_attach_disk(struct device *dev,
 
 	if (IS_ERR(addr)) {
 		rc = PTR_ERR(addr);
+		printk(KERN_INFO "%s: EXIT: PTR_ERR(addr)=%d pid=%d\n", __func__, rc, current->pid);
 		goto out;
 	}
 	pmem->virt_addr = addr;
@@ -558,8 +611,10 @@ static int pmem_attach_disk(struct device *dev,
 	dax_dev = alloc_dax(pmem, &pmem_dax_ops);
 	if (IS_ERR(dax_dev)) {
 		rc = PTR_ERR(dax_dev);
-		if (rc != -EOPNOTSUPP)
+		if (rc != -EOPNOTSUPP) {
+			printk(KERN_INFO "%s: EXIT: PTR_ERR(dax_dev)=%d pid=%d\n", __func__, rc, current->pid);
 			goto out;
+		}
 	} else {
 		set_dax_nocache(dax_dev);
 		set_dax_nomc(dax_dev);
@@ -583,6 +638,7 @@ static int pmem_attach_disk(struct device *dev,
 					  "badblocks");
 	if (!pmem->bb_state)
 		dev_warn(dev, "'badblocks' notification disabled\n");
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 
 out_remove_host:
@@ -592,31 +648,45 @@ out_cleanup_dax:
 	put_dax(pmem->dax_dev);
 out:
 	put_disk(pmem->disk);
+	printk(KERN_INFO "%s: EXIT: rc=%d (out label) pid=%d\n", __func__, rc, current->pid);
 	return rc;
 }
 
 static int nd_pmem_probe(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	int ret;
 	struct nd_namespace_common *ndns;
 
 	ndns = nvdimm_namespace_common_probe(dev);
-	if (IS_ERR(ndns))
+	if (IS_ERR(ndns)) {
+		printk(KERN_INFO "%s: EXIT: PTR_ERR(ndns)=%ld pid=%d\n", __func__, PTR_ERR(ndns), current->pid);
 		return PTR_ERR(ndns);
+	}
 
-	if (is_nd_btt(dev))
-		return nvdimm_namespace_attach_btt(ndns);
+	if (is_nd_btt(dev)) {
+		ret = nvdimm_namespace_attach_btt(ndns);
+		printk(KERN_INFO "%s: EXIT: ret=%d (is_nd_btt) pid=%d\n", __func__, ret, current->pid);
+		return ret;
+	}
 
-	if (is_nd_pfn(dev))
-		return pmem_attach_disk(dev, ndns);
+	if (is_nd_pfn(dev)) {
+		ret = pmem_attach_disk(dev, ndns);
+		printk(KERN_INFO "%s: EXIT: ret=%d (is_nd_pfn) pid=%d\n", __func__, ret, current->pid);
+		return ret;
+	}
 
 	ret = devm_namespace_enable(dev, ndns, nd_info_block_reserve());
-	if (ret)
+	if (ret) {
+		printk(KERN_INFO "%s: EXIT: ret=%d (devm_namespace_enable) pid=%d\n", __func__, ret, current->pid);
 		return ret;
+	}
 
 	ret = nd_btt_probe(dev, ndns);
-	if (ret == 0)
+	if (ret == 0) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (nd_btt_probe==0) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
+	}
 
 	/*
 	 * We have two failure conditions here, there is no
@@ -630,25 +700,34 @@ static int nd_pmem_probe(struct device *dev)
 	 * seed.
 	 */
 	ret = nd_pfn_probe(dev, ndns);
-	if (ret == 0)
+	if (ret == 0) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (nd_pfn_probe==0) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
-	else if (ret == -EOPNOTSUPP)
+	} else if (ret == -EOPNOTSUPP) {
+		printk(KERN_INFO "%s: EXIT: ret=%d (nd_pfn_probe) pid=%d\n", __func__, ret, current->pid);
 		return ret;
+	}
 
 	ret = nd_dax_probe(dev, ndns);
-	if (ret == 0)
+	if (ret == 0) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (nd_dax_probe==0) pid=%d\n", __func__, current->pid);
 		return -ENXIO;
-	else if (ret == -EOPNOTSUPP)
+	} else if (ret == -EOPNOTSUPP) {
+		printk(KERN_INFO "%s: EXIT: ret=%d (nd_dax_probe) pid=%d\n", __func__, ret, current->pid);
 		return ret;
+	}
 
 	/* probe complete, attach handles namespace enabling */
 	devm_namespace_disable(dev, ndns);
 
-	return pmem_attach_disk(dev, ndns);
+	ret = pmem_attach_disk(dev, ndns);
+	printk(KERN_INFO "%s: EXIT: ret=%d (final attach) pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 
 static void nd_pmem_remove(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct pmem_device *pmem = dev_get_drvdata(dev);
 
 	if (is_nd_btt(dev))
@@ -662,15 +741,19 @@ static void nd_pmem_remove(struct device *dev)
 		pmem->bb_state = NULL;
 	}
 	nvdimm_flush(to_nd_region(dev->parent), NULL);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void nd_pmem_shutdown(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	nvdimm_flush(to_nd_region(dev->parent), NULL);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void pmem_revalidate_poison(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nd_region *nd_region;
 	resource_size_t offset = 0, end_trunc = 0;
 	struct nd_namespace_common *ndns;
@@ -714,10 +797,12 @@ static void pmem_revalidate_poison(struct device *dev)
 	nvdimm_badblocks_populate(nd_region, bb, &range);
 	if (bb_state)
 		sysfs_notify_dirent(bb_state);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void pmem_revalidate_region(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct pmem_device *pmem;
 
 	if (is_nd_btt(dev)) {
@@ -730,10 +815,12 @@ static void pmem_revalidate_region(struct device *dev)
 
 	pmem = dev_get_drvdata(dev);
 	nvdimm_check_and_set_ro(pmem->disk);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static void nd_pmem_notify(struct device *dev, enum nvdimm_event event)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, event=%d pid=%d\n", __func__, dev, event, current->pid);
 	switch (event) {
 	case NVDIMM_REVALIDATE_POISON:
 		pmem_revalidate_poison(dev);
@@ -745,6 +832,7 @@ static void nd_pmem_notify(struct device *dev, enum nvdimm_event event)
 		dev_WARN_ONCE(dev, 1, "notify: unknown event: %d\n", event);
 		break;
 	}
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 MODULE_ALIAS("pmem");
