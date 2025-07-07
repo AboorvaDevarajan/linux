@@ -33,35 +33,42 @@ static u32 best_seq(u32 a, u32 b)
 	a &= NSINDEX_SEQ_MASK;
 	b &= NSINDEX_SEQ_MASK;
 
-	if (a == 0 || a == b)
+	if (a == 0 || a == b) {
+		printk(KERN_INFO "%s: EXIT: b=%u\n", __func__, b);
 		return b;
-	else if (b == 0)
+	} else if (b == 0) {
+		printk(KERN_INFO "%s: EXIT: a=%u\n", __func__, a);
 		return a;
-	else if (nd_inc_seq(a) == b)
+	} else if (nd_inc_seq(a) == b) {
+		printk(KERN_INFO "%s: EXIT: b=%u\n", __func__, b);
 		return b;
-	else
+	} else {
+		printk(KERN_INFO "%s: EXIT: a=%u\n", __func__, a);
 		return a;
+	}
 }
 
 unsigned sizeof_namespace_label(struct nvdimm_drvdata *ndd)
 {
 	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
+	printk(KERN_INFO "%s: EXIT: nslabel_size=%u\n", __func__, ndd->nslabel_size);
 	return ndd->nslabel_size;
 }
 
 static size_t __sizeof_namespace_index(u32 nslot)
 {
 	printk(KERN_INFO "%s: ENTRY: nslot=%u\n", __func__, nslot);
-	return ALIGN(sizeof(struct nd_namespace_index) + DIV_ROUND_UP(nslot, 8),
-			NSINDEX_ALIGN);
+	size_t ret = ALIGN(sizeof(struct nd_namespace_index) + DIV_ROUND_UP(nslot, 8), NSINDEX_ALIGN);
+	printk(KERN_INFO "%s: EXIT: ret=%zu\n", __func__, ret);
+	return ret;
 }
 
-static int __nvdimm_num_label_slots(struct nvdimm_drvdata *ndd,
-		size_t index_size)
+static int __nvdimm_num_label_slots(struct nvdimm_drvdata *ndd, size_t index_size)
 {
 	printk(KERN_INFO "%s: ENTRY: ndd=%p, index_size=%zu\n", __func__, ndd, index_size);
-	return (ndd->nsarea.config_size - index_size * 2) /
-			sizeof_namespace_label(ndd);
+	int ret = (ndd->nsarea.config_size - index_size * 2) / sizeof_namespace_label(ndd);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 int nvdimm_num_label_slots(struct nvdimm_drvdata *ndd)
@@ -71,8 +78,9 @@ int nvdimm_num_label_slots(struct nvdimm_drvdata *ndd)
 
 	tmp_nslot = ndd->nsarea.config_size / sizeof_namespace_label(ndd);
 	n = __sizeof_namespace_index(tmp_nslot) / NSINDEX_ALIGN;
-
-	return __nvdimm_num_label_slots(ndd, NSINDEX_ALIGN * n);
+	int ret = __nvdimm_num_label_slots(ndd, NSINDEX_ALIGN * n);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
@@ -80,20 +88,17 @@ size_t sizeof_namespace_index(struct nvdimm_drvdata *ndd)
 	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	u32 nslot, space, size;
 
-	/*
-	 * Per UEFI 2.7, the minimum size of the Label Storage Area is large
-	 * enough to hold 2 index blocks and 2 labels.  The minimum index
-	 * block size is 256 bytes. The label size is 128 for namespaces
-	 * prior to version 1.2 and at minimum 256 for version 1.2 and later.
-	 */
 	nslot = nvdimm_num_label_slots(ndd);
 	space = ndd->nsarea.config_size - nslot * sizeof_namespace_label(ndd);
 	size = __sizeof_namespace_index(nslot) * 2;
-	if (size <= space && nslot >= 2)
-		return size / 2;
+	if (size <= space && nslot >= 2) {
+		size_t ret = size / 2;
+		printk(KERN_INFO "%s: EXIT: ret=%zu\n", __func__, ret);
+		return ret;
+	}
 
-	dev_err(ndd->dev, "label area (%d) too small to host (%d byte) labels\n",
-			ndd->nsarea.config_size, sizeof_namespace_label(ndd));
+	dev_err(ndd->dev, "label area (%d) too small to host (%d byte) labels\n", ndd->nsarea.config_size, sizeof_namespace_label(ndd));
+	printk(KERN_INFO "%s: EXIT: ret=0\n", __func__);
 	return 0;
 }
 
@@ -220,28 +225,30 @@ static int __nd_label_validate(struct nvdimm_drvdata *ndd)
 		num_valid++;
 	}
 
+	int ret = -1;
 	switch (num_valid) {
 	case 0:
 		break;
 	case 1:
 		for (i = 0; i < num_index; i++)
-			if (valid[i])
+			if (valid[i]) {
+				printk(KERN_INFO "%s: EXIT: i=%d\n", __func__, i);
 				return i;
-		/* can't have num_valid > 0 but valid[] = { false, false } */
+			}
 		WARN_ON(1);
 		break;
 	default:
-		/* pick the best index... */
-		seq = best_seq(__le32_to_cpu(nsindex[0]->seq),
-				__le32_to_cpu(nsindex[1]->seq));
-		if (seq == (__le32_to_cpu(nsindex[1]->seq) & NSINDEX_SEQ_MASK))
+		seq = best_seq(__le32_to_cpu(nsindex[0]->seq), __le32_to_cpu(nsindex[1]->seq));
+		if (seq == (__le32_to_cpu(nsindex[1]->seq) & NSINDEX_SEQ_MASK)) {
+			printk(KERN_INFO "%s: EXIT: 1\n", __func__);
 			return 1;
-		else
+		} else {
+			printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 			return 0;
-		break;
+		}
 	}
-
-	return -1;
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 static int nd_label_validate(struct nvdimm_drvdata *ndd)
@@ -258,48 +265,50 @@ static int nd_label_validate(struct nvdimm_drvdata *ndd)
 			return rc;
 		}
 	}
-
 	printk(KERN_INFO "%s: EXIT: rc=-1\n", __func__);
 	return -1;
 }
 
-static void nd_label_copy(struct nvdimm_drvdata *ndd,
-			  struct nd_namespace_index *dst,
-			  struct nd_namespace_index *src)
+static void nd_label_copy(struct nvdimm_drvdata *ndd, struct nd_namespace_index *dst, struct nd_namespace_index *src)
 {
-	/* just exit if either destination or source is NULL */
-	if (!dst || !src)
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, dst=%p, src=%p\n", __func__, ndd, dst, src);
+	if (!dst || !src) {
+		printk(KERN_INFO "%s: EXIT: dst or src is NULL\n", __func__);
 		return;
-
+	}
 	memcpy(dst, src, sizeof_namespace_index(ndd));
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 static struct nd_namespace_label *nd_label_base(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	void *base = to_namespace_index(ndd, 0);
-
-	return base + 2 * sizeof_namespace_index(ndd);
+	struct nd_namespace_label *ret = base + 2 * sizeof_namespace_index(ndd);
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 
-static int to_slot(struct nvdimm_drvdata *ndd,
-		struct nd_namespace_label *nd_label)
+static int to_slot(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p\n", __func__, ndd, nd_label);
 	unsigned long label, base;
-
 	label = (unsigned long) nd_label;
 	base = (unsigned long) nd_label_base(ndd);
-
-	return (label - base) / sizeof_namespace_label(ndd);
+	int ret = (label - base) / sizeof_namespace_label(ndd);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 static struct nd_namespace_label *to_label(struct nvdimm_drvdata *ndd, int slot)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, slot=%d\n", __func__, ndd, slot);
 	unsigned long label, base;
-
 	base = (unsigned long) nd_label_base(ndd);
 	label = base + sizeof_namespace_label(ndd) * slot;
-
-	return (struct nd_namespace_label *) label;
+	struct nd_namespace_label *ret = (struct nd_namespace_label *) label;
+	printk(KERN_INFO "%s: EXIT: ret=%p\n", __func__, ret);
+	return ret;
 }
 
 #define for_each_clear_bit_le(bit, addr, size) \
@@ -319,93 +328,112 @@ static bool preamble_index(struct nvdimm_drvdata *ndd, int idx,
 		struct nd_namespace_index **nsindex_out,
 		unsigned long **free, u32 *nslot)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, idx=%d\n", __func__, ndd, idx);
 	struct nd_namespace_index *nsindex;
 
 	nsindex = to_namespace_index(ndd, idx);
-	if (nsindex == NULL)
+	if (nsindex == NULL) {
+		printk(KERN_INFO "%s: EXIT: nsindex is NULL\n", __func__);
 		return false;
+	}
 
 	*free = (unsigned long *) nsindex->free;
 	*nslot = __le32_to_cpu(nsindex->nslot);
 	*nsindex_out = nsindex;
 
+	printk(KERN_INFO "%s: EXIT: true\n", __func__);
 	return true;
 }
 
-char *nd_label_gen_id(struct nd_label_id *label_id, const uuid_t *uuid,
-		      u32 flags)
+char *nd_label_gen_id(struct nd_label_id *label_id, const uuid_t *uuid, u32 flags)
 {
-	if (!label_id || !uuid)
+	printk(KERN_INFO "%s: ENTRY: label_id=%p, uuid=%p, flags=%u\n", __func__, label_id, uuid, flags);
+	if (!label_id || !uuid) {
+		printk(KERN_INFO "%s: EXIT: NULL (label_id or uuid is NULL)\n", __func__);
 		return NULL;
+	}
 	snprintf(label_id->id, ND_LABEL_ID_SIZE, "pmem-%pUb", uuid);
+	printk(KERN_INFO "%s: EXIT: id=%s\n", __func__, label_id->id);
 	return label_id->id;
 }
 
-static bool preamble_current(struct nvdimm_drvdata *ndd,
-		struct nd_namespace_index **nsindex,
-		unsigned long **free, u32 *nslot)
+static bool preamble_current(struct nvdimm_drvdata *ndd, struct nd_namespace_index **nsindex, unsigned long **free, u32 *nslot)
 {
-	return preamble_index(ndd, ndd->ns_current, nsindex,
-			free, nslot);
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
+	bool ret = preamble_index(ndd, ndd->ns_current, nsindex, free, nslot);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
-static bool preamble_next(struct nvdimm_drvdata *ndd,
-		struct nd_namespace_index **nsindex,
-		unsigned long **free, u32 *nslot)
+static bool preamble_next(struct nvdimm_drvdata *ndd, struct nd_namespace_index **nsindex, unsigned long **free, u32 *nslot)
 {
-	return preamble_index(ndd, ndd->ns_next, nsindex,
-			free, nslot);
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
+	bool ret = preamble_index(ndd, ndd->ns_next, nsindex, free, nslot);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
-static bool nsl_validate_checksum(struct nvdimm_drvdata *ndd,
-				  struct nd_namespace_label *nd_label)
+static bool nsl_validate_checksum(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p\n", __func__, ndd, nd_label);
 	u64 sum, sum_save;
 
-	if (!ndd->cxl && !efi_namespace_label_has(ndd, checksum))
+	if (!ndd->cxl && !efi_namespace_label_has(ndd, checksum)) {
+		printk(KERN_INFO "%s: EXIT: true (no checksum)\n", __func__);
 		return true;
+	}
 
 	sum_save = nsl_get_checksum(ndd, nd_label);
 	nsl_set_checksum(ndd, nd_label, 0);
 	sum = nd_fletcher64(nd_label, sizeof_namespace_label(ndd), 1);
 	nsl_set_checksum(ndd, nd_label, sum_save);
-	return sum == sum_save;
+	bool ret = (sum == sum_save);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
-static void nsl_calculate_checksum(struct nvdimm_drvdata *ndd,
-				   struct nd_namespace_label *nd_label)
+static void nsl_calculate_checksum(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p\n", __func__, ndd, nd_label);
 	u64 sum;
 
-	if (!ndd->cxl && !efi_namespace_label_has(ndd, checksum))
+	if (!ndd->cxl && !efi_namespace_label_has(ndd, checksum)) {
+		printk(KERN_INFO "%s: EXIT: no checksum\n", __func__);
 		return;
+	}
 	nsl_set_checksum(ndd, nd_label, 0);
 	sum = nd_fletcher64(nd_label, sizeof_namespace_label(ndd), 1);
 	nsl_set_checksum(ndd, nd_label, sum);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
-static bool slot_valid(struct nvdimm_drvdata *ndd,
-		struct nd_namespace_label *nd_label, u32 slot)
+static bool slot_valid(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label, u32 slot)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p, slot=%u\n", __func__, ndd, nd_label, slot);
 	bool valid;
 
-	/* check that we are written where we expect to be written */
-	if (slot != nsl_get_slot(ndd, nd_label))
+	if (slot != nsl_get_slot(ndd, nd_label)) {
+		printk(KERN_INFO "%s: EXIT: slot mismatch\n", __func__);
 		return false;
+	}
 	valid = nsl_validate_checksum(ndd, nd_label);
 	if (!valid)
 		dev_dbg(ndd->dev, "fail checksum. slot: %d\n", slot);
+	printk(KERN_INFO "%s: EXIT: valid=%d\n", __func__, valid);
 	return valid;
 }
 
 int nd_label_reserve_dpa(struct nvdimm_drvdata *ndd)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p\n", __func__, ndd);
 	struct nd_namespace_index *nsindex;
 	unsigned long *free;
 	u32 nslot, slot;
 
-	if (!preamble_current(ndd, &nsindex, &free, &nslot))
-		return 0; /* no label, nothing to reserve */
+	if (!preamble_current(ndd, &nsindex, &free, &nslot)) {
+		printk(KERN_INFO "%s: EXIT: no label, nothing to reserve\n", __func__);
+		return 0;
+	}
 
 	for_each_clear_bit_le(slot, free, nslot) {
 		struct nd_namespace_label *nd_label;
@@ -423,14 +451,15 @@ int nd_label_reserve_dpa(struct nvdimm_drvdata *ndd)
 		nsl_get_uuid(ndd, nd_label, &label_uuid);
 		flags = nsl_get_flags(ndd, nd_label);
 		nd_label_gen_id(&label_id, &label_uuid, flags);
-		res = nvdimm_allocate_dpa(ndd, &label_id,
-					  nsl_get_dpa(ndd, nd_label),
-					  nsl_get_rawsize(ndd, nd_label));
+		res = nvdimm_allocate_dpa(ndd, &label_id, nsl_get_dpa(ndd, nd_label), nsl_get_rawsize(ndd, nd_label));
 		nd_dbg_dpa(nd_region, ndd, res, "reserve\n");
-		if (!res)
+		if (!res) {
+			printk(KERN_INFO "%s: EXIT: -EBUSY\n", __func__);
 			return -EBUSY;
+		}
 	}
 
+	printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 	return 0;
 }
 
@@ -448,8 +477,7 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 		return 0;
 	}
 
-	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0 ||
-	    ndd->nsarea.config_size == 0) {
+	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0 || ndd->nsarea.config_size == 0) {
 		printk(KERN_INFO "%s: EXIT: invalid nsarea\n", __func__);
 		return -ENXIO;
 	}
@@ -470,13 +498,11 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 
 	max_xfer = min_t(size_t, ndd->nsarea.max_xfer, config_size);
 	if (read_size < max_xfer) {
-		max_xfer -= ((max_xfer - 1) - (config_size - 1) % max_xfer) /
-			    DIV_ROUND_UP(config_size, max_xfer);
+		max_xfer -= ((max_xfer - 1) - (config_size - 1) % max_xfer) / DIV_ROUND_UP(config_size, max_xfer);
 		if (max_xfer < read_size)
 			max_xfer = read_size;
 	}
-	read_size = min(DIV_ROUND_UP(read_size, max_xfer) * max_xfer,
-			config_size);
+	read_size = min(DIV_ROUND_UP(read_size, max_xfer) * max_xfer, config_size);
 	rc = nvdimm_get_config_data(ndd, ndd->data, 0, read_size);
 	if (rc)
 		goto out_err;
@@ -504,8 +530,7 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 		label_read_size = DIV_ROUND_UP(label_read_size, max_xfer) * max_xfer;
 		if (read_size + label_read_size > config_size)
 			label_read_size = config_size - read_size;
-		rc = nvdimm_get_config_data(ndd, ndd->data + read_size,
-					    read_size, label_read_size);
+		rc = nvdimm_get_config_data(ndd, ndd->data + read_size, read_size, label_read_size);
 		if (rc)
 			goto out_err;
 		read_size += label_read_size;
@@ -632,8 +657,7 @@ u32 nd_label_nfree(struct nvdimm_drvdata *ndd)
 	return ret;
 }
 
-static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
-		unsigned long flags)
+static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq, unsigned long flags)
 {
 	printk(KERN_INFO "%s: ENTRY: ndd=%p, index=%d, seq=%u, flags=0x%lx\n", __func__, ndd, index, seq, flags);
 	struct nd_namespace_index *nsindex;
@@ -652,16 +676,12 @@ static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 	memset(&nsindex->flags, 0, 3);
 	nsindex->labelsize = sizeof_namespace_label(ndd) >> 8;
 	nsindex->seq = __cpu_to_le32(seq);
-	offset = (unsigned long) nsindex
-		- (unsigned long) to_namespace_index(ndd, 0);
+	offset = (unsigned long) nsindex - (unsigned long) to_namespace_index(ndd, 0);
 	nsindex->myoff = __cpu_to_le64(offset);
 	nsindex->mysize = __cpu_to_le64(sizeof_namespace_index(ndd));
-	offset = (unsigned long) to_namespace_index(ndd,
-			nd_label_next_nsindex(index))
-		- (unsigned long) to_namespace_index(ndd, 0);
+	offset = (unsigned long) to_namespace_index(ndd, nd_label_next_nsindex(index)) - (unsigned long) to_namespace_index(ndd, 0);
 	nsindex->otheroff = __cpu_to_le64(offset);
-	offset = (unsigned long) nd_label_base(ndd)
-		- (unsigned long) to_namespace_index(ndd, 0);
+	offset = (unsigned long) nd_label_base(ndd) - (unsigned long) to_namespace_index(ndd, 0);
 	nsindex->labeloff = __cpu_to_le64(offset);
 	nsindex->nslot = __cpu_to_le32(nslot);
 	nsindex->major = __cpu_to_le16(1);
@@ -681,17 +701,17 @@ static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 	}
 	checksum = nd_fletcher64(nsindex, sizeof_namespace_index(ndd), 1);
 	nsindex->checksum = __cpu_to_le64(checksum);
-	rc = nvdimm_set_config_data(ndd, __le64_to_cpu(nsindex->myoff),
-			nsindex, sizeof_namespace_index(ndd));
+	rc = nvdimm_set_config_data(ndd, __le64_to_cpu(nsindex->myoff), nsindex, sizeof_namespace_index(ndd));
 	if (rc < 0) {
 		printk(KERN_INFO "%s: EXIT: nvdimm_set_config_data failed rc=%d\n", __func__, rc);
 		return rc;
 	}
 
-	if (flags & ND_NSINDEX_INIT)
+	if (flags & ND_NSINDEX_INIT) {
+		printk(KERN_INFO "%s: EXIT: 0 (init)\n", __func__);
 		return 0;
+	}
 
-	/* copy the index we just wrote to the new 'next' */
 	WARN_ON(index != ndd->ns_next);
 	nd_label_copy(ndd, to_current_namespace_index(ndd), nsindex);
 	ndd->ns_current = nd_label_next_nsindex(ndd->ns_current);
@@ -702,158 +722,186 @@ static int nd_label_write_index(struct nvdimm_drvdata *ndd, int index, u32 seq,
 	return rc;
 }
 
-static unsigned long nd_label_offset(struct nvdimm_drvdata *ndd,
-		struct nd_namespace_label *nd_label)
+static unsigned long nd_label_offset(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label)
 {
-	return (unsigned long) nd_label
-		- (unsigned long) to_namespace_index(ndd, 0);
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p\n", __func__, ndd, nd_label);
+	unsigned long ret = (unsigned long) nd_label - (unsigned long) to_namespace_index(ndd, 0);
+	printk(KERN_INFO "%s: EXIT: ret=%lu\n", __func__, ret);
+	return ret;
 }
 
 static enum nvdimm_claim_class guid_to_nvdimm_cclass(guid_t *guid)
 {
-	if (guid_equal(guid, &nvdimm_btt_guid))
+	printk(KERN_INFO "%s: ENTRY: guid=%p\n", __func__, guid);
+	if (guid_equal(guid, &nvdimm_btt_guid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_BTT\n", __func__);
 		return NVDIMM_CCLASS_BTT;
-	else if (guid_equal(guid, &nvdimm_btt2_guid))
+	} else if (guid_equal(guid, &nvdimm_btt2_guid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_BTT2\n", __func__);
 		return NVDIMM_CCLASS_BTT2;
-	else if (guid_equal(guid, &nvdimm_pfn_guid))
+	} else if (guid_equal(guid, &nvdimm_pfn_guid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_PFN\n", __func__);
 		return NVDIMM_CCLASS_PFN;
-	else if (guid_equal(guid, &nvdimm_dax_guid))
+	} else if (guid_equal(guid, &nvdimm_dax_guid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_DAX\n", __func__);
 		return NVDIMM_CCLASS_DAX;
-	else if (guid_equal(guid, &guid_null))
+	} else if (guid_equal(guid, &guid_null)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_NONE\n", __func__);
 		return NVDIMM_CCLASS_NONE;
-
+	}
+	printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_UNKNOWN\n", __func__);
 	return NVDIMM_CCLASS_UNKNOWN;
 }
 
 /* CXL labels store UUIDs instead of GUIDs for the same data */
 static enum nvdimm_claim_class uuid_to_nvdimm_cclass(uuid_t *uuid)
 {
-	if (uuid_equal(uuid, &nvdimm_btt_uuid))
+	printk(KERN_INFO "%s: ENTRY: uuid=%p\n", __func__, uuid);
+	if (uuid_equal(uuid, &nvdimm_btt_uuid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_BTT\n", __func__);
 		return NVDIMM_CCLASS_BTT;
-	else if (uuid_equal(uuid, &nvdimm_btt2_uuid))
+	} else if (uuid_equal(uuid, &nvdimm_btt2_uuid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_BTT2\n", __func__);
 		return NVDIMM_CCLASS_BTT2;
-	else if (uuid_equal(uuid, &nvdimm_pfn_uuid))
+	} else if (uuid_equal(uuid, &nvdimm_pfn_uuid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_PFN\n", __func__);
 		return NVDIMM_CCLASS_PFN;
-	else if (uuid_equal(uuid, &nvdimm_dax_uuid))
+	} else if (uuid_equal(uuid, &nvdimm_dax_uuid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_DAX\n", __func__);
 		return NVDIMM_CCLASS_DAX;
-	else if (uuid_equal(uuid, &uuid_null))
+	} else if (uuid_equal(uuid, &uuid_null)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_NONE\n", __func__);
 		return NVDIMM_CCLASS_NONE;
-
+	}
+	printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_UNKNOWN\n", __func__);
 	return NVDIMM_CCLASS_UNKNOWN;
 }
 
-static const guid_t *to_abstraction_guid(enum nvdimm_claim_class claim_class,
-	guid_t *target)
+static const guid_t *to_abstraction_guid(enum nvdimm_claim_class claim_class, guid_t *target)
 {
-	if (claim_class == NVDIMM_CCLASS_BTT)
+	printk(KERN_INFO "%s: ENTRY: claim_class=%d, target=%p\n", __func__, claim_class, target);
+	if (claim_class == NVDIMM_CCLASS_BTT) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_btt_guid\n", __func__);
 		return &nvdimm_btt_guid;
-	else if (claim_class == NVDIMM_CCLASS_BTT2)
+	} else if (claim_class == NVDIMM_CCLASS_BTT2) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_btt2_guid\n", __func__);
 		return &nvdimm_btt2_guid;
-	else if (claim_class == NVDIMM_CCLASS_PFN)
+	} else if (claim_class == NVDIMM_CCLASS_PFN) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_pfn_guid\n", __func__);
 		return &nvdimm_pfn_guid;
-	else if (claim_class == NVDIMM_CCLASS_DAX)
+	} else if (claim_class == NVDIMM_CCLASS_DAX) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_dax_guid\n", __func__);
 		return &nvdimm_dax_guid;
-	else if (claim_class == NVDIMM_CCLASS_UNKNOWN) {
-		/*
-		 * If we're modifying a namespace for which we don't
-		 * know the claim_class, don't touch the existing guid.
-		 */
+	} else if (claim_class == NVDIMM_CCLASS_UNKNOWN) {
+		printk(KERN_INFO "%s: EXIT: target (unknown)\n", __func__);
 		return target;
-	} else
+	} else {
+		printk(KERN_INFO "%s: EXIT: guid_null\n", __func__);
 		return &guid_null;
+	}
 }
 
 /* CXL labels store UUIDs instead of GUIDs for the same data */
-static const uuid_t *to_abstraction_uuid(enum nvdimm_claim_class claim_class,
-					 uuid_t *target)
+static const uuid_t *to_abstraction_uuid(enum nvdimm_claim_class claim_class, uuid_t *target)
 {
-	if (claim_class == NVDIMM_CCLASS_BTT)
+	printk(KERN_INFO "%s: ENTRY: claim_class=%d, target=%p\n", __func__, claim_class, target);
+	if (claim_class == NVDIMM_CCLASS_BTT) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_btt_uuid\n", __func__);
 		return &nvdimm_btt_uuid;
-	else if (claim_class == NVDIMM_CCLASS_BTT2)
+	} else if (claim_class == NVDIMM_CCLASS_BTT2) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_btt2_uuid\n", __func__);
 		return &nvdimm_btt2_uuid;
-	else if (claim_class == NVDIMM_CCLASS_PFN)
+	} else if (claim_class == NVDIMM_CCLASS_PFN) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_pfn_uuid\n", __func__);
 		return &nvdimm_pfn_uuid;
-	else if (claim_class == NVDIMM_CCLASS_DAX)
+	} else if (claim_class == NVDIMM_CCLASS_DAX) {
+		printk(KERN_INFO "%s: EXIT: nvdimm_dax_uuid\n", __func__);
 		return &nvdimm_dax_uuid;
-	else if (claim_class == NVDIMM_CCLASS_UNKNOWN) {
-		/*
-		 * If we're modifying a namespace for which we don't
-		 * know the claim_class, don't touch the existing uuid.
-		 */
+	} else if (claim_class == NVDIMM_CCLASS_UNKNOWN) {
+		printk(KERN_INFO "%s: EXIT: target (unknown)\n", __func__);
 		return target;
-	} else
+	} else {
+		printk(KERN_INFO "%s: EXIT: uuid_null\n", __func__);
 		return &uuid_null;
+	}
 }
 
-static void reap_victim(struct nd_mapping *nd_mapping,
-		struct nd_label_ent *victim)
+static void reap_victim(struct nd_mapping *nd_mapping, struct nd_label_ent *victim)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_mapping=%p, victim=%p\n", __func__, nd_mapping, victim);
 	struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
 	u32 slot = to_slot(ndd, victim->label);
 
 	dev_dbg(ndd->dev, "free: %d\n", slot);
 	nd_label_free_slot(ndd, slot);
 	victim->label = NULL;
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
-static void nsl_set_type_guid(struct nvdimm_drvdata *ndd,
-			      struct nd_namespace_label *nd_label, guid_t *guid)
+static void nsl_set_type_guid(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label, guid_t *guid)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p, guid=%p\n", __func__, ndd, nd_label, guid);
 	if (efi_namespace_label_has(ndd, type_guid))
 		guid_copy(&nd_label->efi.type_guid, guid);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
-bool nsl_validate_type_guid(struct nvdimm_drvdata *ndd,
-			    struct nd_namespace_label *nd_label, guid_t *guid)
+bool nsl_validate_type_guid(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label, guid_t *guid)
 {
-	if (ndd->cxl || !efi_namespace_label_has(ndd, type_guid))
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p, guid=%p\n", __func__, ndd, nd_label, guid);
+	if (ndd->cxl || !efi_namespace_label_has(ndd, type_guid)) {
+		printk(KERN_INFO "%s: EXIT: true (cxl or no type_guid)\n", __func__);
 		return true;
+	}
 	if (!guid_equal(&nd_label->efi.type_guid, guid)) {
-		dev_dbg(ndd->dev, "expect type_guid %pUb got %pUb\n", guid,
-			&nd_label->efi.type_guid);
+		dev_dbg(ndd->dev, "expect type_guid %pUb got %pUb\n", guid, &nd_label->efi.type_guid);
+		printk(KERN_INFO "%s: EXIT: false (type_guid mismatch)\n", __func__);
 		return false;
 	}
+	printk(KERN_INFO "%s: EXIT: true\n", __func__);
 	return true;
 }
 
-static void nsl_set_claim_class(struct nvdimm_drvdata *ndd,
-				struct nd_namespace_label *nd_label,
-				enum nvdimm_claim_class claim_class)
+static void nsl_set_claim_class(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label, enum nvdimm_claim_class claim_class)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p, claim_class=%d\n", __func__, ndd, nd_label, claim_class);
 	if (ndd->cxl) {
 		uuid_t uuid;
-
 		import_uuid(&uuid, nd_label->cxl.abstraction_uuid);
-		export_uuid(nd_label->cxl.abstraction_uuid,
-			    to_abstraction_uuid(claim_class, &uuid));
+		export_uuid(nd_label->cxl.abstraction_uuid, to_abstraction_uuid(claim_class, &uuid));
+		printk(KERN_INFO "%s: EXIT (cxl)\n", __func__);
 		return;
 	}
-
-	if (!efi_namespace_label_has(ndd, abstraction_guid))
+	if (!efi_namespace_label_has(ndd, abstraction_guid)) {
+		printk(KERN_INFO "%s: EXIT (no abstraction_guid)\n", __func__);
 		return;
-	guid_copy(&nd_label->efi.abstraction_guid,
-		  to_abstraction_guid(claim_class,
-				      &nd_label->efi.abstraction_guid));
+	}
+	guid_copy(&nd_label->efi.abstraction_guid, to_abstraction_guid(claim_class, &nd_label->efi.abstraction_guid));
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
-enum nvdimm_claim_class nsl_get_claim_class(struct nvdimm_drvdata *ndd,
-					    struct nd_namespace_label *nd_label)
+enum nvdimm_claim_class nsl_get_claim_class(struct nvdimm_drvdata *ndd, struct nd_namespace_label *nd_label)
 {
+	printk(KERN_INFO "%s: ENTRY: ndd=%p, nd_label=%p\n", __func__, ndd, nd_label);
 	if (ndd->cxl) {
 		uuid_t uuid;
-
 		import_uuid(&uuid, nd_label->cxl.abstraction_uuid);
-		return uuid_to_nvdimm_cclass(&uuid);
+		enum nvdimm_claim_class ret = uuid_to_nvdimm_cclass(&uuid);
+		printk(KERN_INFO "%s: EXIT: ret=%d (cxl)\n", __func__, ret);
+		return ret;
 	}
-	if (!efi_namespace_label_has(ndd, abstraction_guid))
+	if (!efi_namespace_label_has(ndd, abstraction_guid)) {
+		printk(KERN_INFO "%s: EXIT: NVDIMM_CCLASS_NONE (no abstraction_guid)\n", __func__);
 		return NVDIMM_CCLASS_NONE;
-	return guid_to_nvdimm_cclass(&nd_label->efi.abstraction_guid);
+	}
+	enum nvdimm_claim_class ret = guid_to_nvdimm_cclass(&nd_label->efi.abstraction_guid);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
-static int __pmem_label_update(struct nd_region *nd_region,
-		struct nd_mapping *nd_mapping, struct nd_namespace_pmem *nspm,
-		int pos, unsigned long flags)
+static int __pmem_label_update(struct nd_region *nd_region, struct nd_mapping *nd_mapping, struct nd_namespace_pmem *nspm, int pos, unsigned long flags)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p, nd_mapping=%p, nspm=%p, pos=%d, flags=%lx\n", __func__, nd_region, nd_mapping, nspm, pos, flags);
 	struct nd_namespace_common *ndns = &nspm->nsio.common;
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 	struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
@@ -941,6 +989,7 @@ static int __pmem_label_update(struct nd_region *nd_region,
 	}
 	mutex_unlock(&nd_mapping->lock);
 
+	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
 
@@ -1033,52 +1082,50 @@ static int del_labels(struct nd_mapping *nd_mapping, uuid_t *uuid)
 			nd_inc_seq(__le32_to_cpu(nsindex->seq)), 0);
 }
 
-int nd_pmem_namespace_label_update(struct nd_region *nd_region,
-		struct nd_namespace_pmem *nspm, resource_size_t size)
+int nd_pmem_namespace_label_update(struct nd_region *nd_region, struct nd_namespace_pmem *nspm, resource_size_t size)
 {
 	printk(KERN_INFO "%s: ENTRY: nd_region=%p, nspm=%p, size=%pa\n", __func__, nd_region, nspm, &size);
-	int i, rc;
-
+	int i, rc = 0;
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
 		struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
 		struct resource *res;
 		int count = 0;
-
 		if (size == 0) {
 			rc = del_labels(nd_mapping, nspm->uuid);
-			if (rc)
+			if (rc) {
+				printk(KERN_INFO "%s: EXIT: rc=%d (del_labels)\n", __func__, rc);
 				return rc;
+			}
 			continue;
 		}
-
 		for_each_dpa_resource(ndd, res)
 			if (strncmp(res->name, "pmem", 4) == 0)
 				count++;
 		WARN_ON_ONCE(!count);
-
 		rc = init_labels(nd_mapping, count);
-		if (rc < 0)
+		if (rc < 0) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (init_labels)\n", __func__, rc);
 			return rc;
-
-		rc = __pmem_label_update(nd_region, nd_mapping, nspm, i,
-				NSLABEL_FLAG_UPDATING);
-		if (rc)
+		}
+		rc = __pmem_label_update(nd_region, nd_mapping, nspm, i, NSLABEL_FLAG_UPDATING);
+		if (rc) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (__pmem_label_update)\n", __func__, rc);
 			return rc;
+		}
 	}
-
-	if (size == 0)
+	if (size == 0) {
+		printk(KERN_INFO "%s: EXIT: 0 (size==0)\n", __func__);
 		return 0;
-
-	/* Clear the UPDATING flag per UEFI 2.7 expectations */
+	}
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-
 		rc = __pmem_label_update(nd_region, nd_mapping, nspm, i, 0);
-		if (rc)
+		if (rc) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (clear UPDATING)\n", __func__, rc);
 			return rc;
+		}
 	}
-
 	printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 	return rc;
 }
@@ -1090,15 +1137,12 @@ int __init nd_label_init(void)
 	WARN_ON(guid_parse(NVDIMM_BTT2_GUID, &nvdimm_btt2_guid));
 	WARN_ON(guid_parse(NVDIMM_PFN_GUID, &nvdimm_pfn_guid));
 	WARN_ON(guid_parse(NVDIMM_DAX_GUID, &nvdimm_dax_guid));
-
 	WARN_ON(uuid_parse(NVDIMM_BTT_GUID, &nvdimm_btt_uuid));
 	WARN_ON(uuid_parse(NVDIMM_BTT2_GUID, &nvdimm_btt2_uuid));
 	WARN_ON(uuid_parse(NVDIMM_PFN_GUID, &nvdimm_pfn_uuid));
 	WARN_ON(uuid_parse(NVDIMM_DAX_GUID, &nvdimm_dax_uuid));
-
 	WARN_ON(uuid_parse(CXL_REGION_UUID, &cxl_region_uuid));
 	WARN_ON(uuid_parse(CXL_NAMESPACE_UUID, &cxl_namespace_uuid));
-
 	printk(KERN_INFO "%s: EXIT\n", __func__);
 	return 0;
 }
