@@ -416,17 +416,20 @@ static resource_size_t init_dpa_allocation(struct nd_label_id *label_id,
 		struct nd_region *nd_region, struct nd_mapping *nd_mapping,
 		resource_size_t n)
 {
-	struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
-	struct resource *res;
-	int rc = 0;
+    printk(KERN_INFO "%s: ENTRY: label_id=%p, nd_region=%p, nd_mapping=%p, n=%pa pid=%d\n", __func__, label_id, nd_region, nd_mapping, &n, current->pid);
+    struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
+    struct resource *res;
+    int rc = 0;
 
-	/* first resource allocation for this label-id or dimm */
-	res = nvdimm_allocate_dpa(ndd, label_id, nd_mapping->start, n);
-	if (!res)
-		rc = -EBUSY;
+    /* first resource allocation for this label-id or dimm */
+    res = nvdimm_allocate_dpa(ndd, label_id, nd_mapping->start, n);
+    if (!res)
+        rc = -EBUSY;
 
-	nd_dbg_dpa(nd_region, ndd, res, "init %d\n", rc);
-	return rc ? n : 0;
+    nd_dbg_dpa(nd_region, ndd, res, "init %d\n", rc);
+    resource_size_t ret = rc ? n : 0;
+    printk(KERN_INFO "%s: EXIT: ret=%pa pid=%d\n", __func__, &ret, current->pid);
+    return ret;
 }
 
 
@@ -451,35 +454,43 @@ static void space_valid(struct nd_region *nd_region, struct nvdimm_drvdata *ndd,
 		struct resource *next, struct resource *exist,
 		resource_size_t n, struct resource *valid)
 {
-	bool is_reserve = strcmp(label_id->id, "pmem-reserve") == 0;
-	unsigned long align;
+    printk(KERN_INFO "%s: ENTRY: nd_region=%p, ndd=%p, label_id=%p, prev=%p, next=%p, exist=%p, n=%pa, valid=%p pid=%d\n", __func__, nd_region, ndd, label_id, prev, next, exist, &n, valid, current->pid);
+    bool is_reserve = strcmp(label_id->id, "pmem-reserve") == 0;
+    unsigned long align;
 
-	align = nd_region->align / nd_region->ndr_mappings;
-	valid->start = ALIGN(valid->start, align);
-	valid->end = ALIGN_DOWN(valid->end + 1, align) - 1;
+    align = nd_region->align / nd_region->ndr_mappings;
+    valid->start = ALIGN(valid->start, align);
+    valid->end = ALIGN_DOWN(valid->end + 1, align) - 1;
 
-	if (valid->start >= valid->end)
-		goto invalid;
+    if (valid->start >= valid->end)
+        goto invalid;
 
-	if (is_reserve)
-		return;
+    if (is_reserve) {
+        printk(KERN_INFO "%s: EXIT (is_reserve) pid=%d\n", __func__, current->pid);
+        return;
+    }
 
-	/* allocation needs to be contiguous, so this is all or nothing */
-	if (resource_size(valid) < n)
-		goto invalid;
+    /* allocation needs to be contiguous, so this is all or nothing */
+    if (resource_size(valid) < n)
+        goto invalid;
 
-	/* we've got all the space we need and no existing allocation */
-	if (!exist)
-		return;
+    /* we've got all the space we need and no existing allocation */
+    if (!exist) {
+        printk(KERN_INFO "%s: EXIT (no exist) pid=%d\n", __func__, current->pid);
+        return;
+    }
 
-	/* allocation needs to be contiguous with the existing namespace */
-	if (valid->start == exist->end + 1
-			|| valid->end == exist->start - 1)
-		return;
+    /* allocation needs to be contiguous with the existing namespace */
+    if (valid->start == exist->end + 1
+            || valid->end == exist->start - 1) {
+        printk(KERN_INFO "%s: EXIT (contiguous) pid=%d\n", __func__, current->pid);
+        return;
+    }
 
  invalid:
-	/* truncate @valid size to 0 */
-	valid->end = valid->start - 1;
+    /* truncate @valid size to 0 */
+    valid->end = valid->start - 1;
+    printk(KERN_INFO "%s: EXIT (invalid) pid=%d\n", __func__, current->pid);
 }
 
 enum alloc_loc {
@@ -977,32 +988,47 @@ EXPORT_SYMBOL(nvdimm_namespace_locked);
 static ssize_t size_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%llu\n", (unsigned long long)
-			nvdimm_namespace_capacity(to_ndns(dev)));
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    ssize_t rc = sprintf(buf, "%llu\n", (unsigned long long)
+            nvdimm_namespace_capacity(to_ndns(dev)));
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR(size, 0444, size_show, size_store);
 
 static uuid_t *namespace_to_uuid(struct device *dev)
 {
-	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		return nspm->uuid;
-	}
-	return ERR_PTR(-ENXIO);
+    printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+    if (is_namespace_pmem(dev)) {
+        struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
+        printk(KERN_INFO "%s: EXIT: uuid=%p pid=%d\n", __func__, nspm->uuid, current->pid);
+        return nspm->uuid;
+    }
+    printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENXIO) pid=%d\n", __func__, current->pid);
+    return ERR_PTR(-ENXIO);
 }
 
 static ssize_t uuid_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
 {
-	uuid_t *uuid = namespace_to_uuid(dev);
-
-	if (IS_ERR(uuid))
-		return PTR_ERR(uuid);
-	if (uuid)
-		return sprintf(buf, "%pUb\n", uuid);
-	return sprintf(buf, "\n");
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    uuid_t *uuid = namespace_to_uuid(dev);
+    ssize_t rc;
+    if (IS_ERR(uuid)) {
+        rc = PTR_ERR(uuid);
+        printk(KERN_INFO "%s: EXIT: rc=%zd (IS_ERR) pid=%d\n", __func__, rc, current->pid);
+        return rc;
+    }
+    if (uuid) {
+        rc = sprintf(buf, "%pUb\n", uuid);
+        printk(KERN_INFO "%s: EXIT: rc=%zd (uuid) pid=%d\n", __func__, rc, current->pid);
+        return rc;
+    }
+    rc = sprintf(buf, "\n");
+    printk(KERN_INFO "%s: EXIT: rc=%zd (empty) pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
+static DEVICE_ATTR_RW(uuid);
 
 /**
  * namespace_update_uuid - check for a unique uuid and whether we're "renaming"
@@ -1122,23 +1148,26 @@ static DEVICE_ATTR_RW(uuid);
 static ssize_t resource_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct resource *res;
-
-	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		res = &nspm->nsio.res;
-	} else if (is_namespace_io(dev)) {
-		struct nd_namespace_io *nsio = to_nd_namespace_io(dev);
-
-		res = &nsio->res;
-	} else
-		return -ENXIO;
-
-	/* no address to convey if the namespace has no allocation */
-	if (resource_size(res) == 0)
-		return -ENXIO;
-	return sprintf(buf, "%#llx\n", (unsigned long long) res->start);
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    struct resource *res;
+    ssize_t rc;
+    if (is_namespace_pmem(dev)) {
+        struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
+        res = &nspm->nsio.res;
+    } else if (is_namespace_io(dev)) {
+        struct nd_namespace_io *nsio = to_nd_namespace_io(dev);
+        res = &nsio->res;
+    } else {
+        printk(KERN_INFO "%s: EXIT: -ENXIO (not pmem/io) pid=%d\n", __func__, current->pid);
+        return -ENXIO;
+    }
+    if (resource_size(res) == 0) {
+        printk(KERN_INFO "%s: EXIT: -ENXIO (resource_size==0) pid=%d\n", __func__, current->pid);
+        return -ENXIO;
+    }
+    rc = sprintf(buf, "%#llx\n", (unsigned long long) res->start);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_ADMIN_RO(resource);
 
@@ -1147,272 +1176,265 @@ static const unsigned long pmem_lbasize_supported[] = { 512, 4096, 0 };
 static ssize_t sector_size_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		return nd_size_select_show(nspm->lbasize,
-				pmem_lbasize_supported, buf);
-	}
-	return -ENXIO;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    ssize_t rc;
+    if (is_namespace_pmem(dev)) {
+        struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
+        rc = nd_size_select_show(nspm->lbasize,
+                pmem_lbasize_supported, buf);
+        printk(KERN_INFO "%s: EXIT: rc=%zd (pmem) pid=%d\n", __func__, rc, current->pid);
+        return rc;
+    }
+    printk(KERN_INFO "%s: EXIT: -ENXIO (not pmem) pid=%d\n", __func__, current->pid);
+    return -ENXIO;
 }
 
 static ssize_t sector_size_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
-	struct nd_region *nd_region = to_nd_region(dev->parent);
-	const unsigned long *supported;
-	unsigned long *lbasize;
-	ssize_t rc = 0;
-
-	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		lbasize = &nspm->lbasize;
-		supported = pmem_lbasize_supported;
-	} else
-		return -ENXIO;
-
-	device_lock(dev);
-	nvdimm_bus_lock(dev);
-	if (to_ndns(dev)->claim)
-		rc = -EBUSY;
-	if (rc >= 0)
-		rc = nd_size_select_store(dev, buf, lbasize, supported);
-	if (rc >= 0)
-		rc = nd_namespace_label_update(nd_region, dev);
-	dev_dbg(dev, "result: %zd %s: %s%s", rc, rc < 0 ? "tried" : "wrote",
-			buf, buf[len - 1] == '\n' ? "" : "\n");
-	nvdimm_bus_unlock(dev);
-	device_unlock(dev);
-
-	return rc ? rc : len;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
+    struct nd_region *nd_region = to_nd_region(dev->parent);
+    const unsigned long *supported;
+    unsigned long *lbasize;
+    ssize_t rc = 0;
+    if (is_namespace_pmem(dev)) {
+        struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
+        lbasize = &nspm->lbasize;
+        supported = pmem_lbasize_supported;
+    } else {
+        printk(KERN_INFO "%s: EXIT: -ENXIO (not pmem) pid=%d\n", __func__, current->pid);
+        return -ENXIO;
+    }
+    device_lock(dev);
+    nvdimm_bus_lock(dev);
+    if (to_ndns(dev)->claim)
+        rc = -EBUSY;
+    if (rc >= 0)
+        rc = nd_size_select_store(dev, buf, lbasize, supported);
+    if (rc >= 0)
+        rc = nd_namespace_label_update(nd_region, dev);
+    dev_dbg(dev, "result: %zd %s: %s%s", rc, rc < 0 ? "tried" : "wrote",
+            buf, buf[len - 1] == '\n' ? "" : "\n");
+    nvdimm_bus_unlock(dev);
+    device_unlock(dev);
+    ssize_t ret = rc ? rc : len;
+    printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+    return ret;
 }
 static DEVICE_ATTR_RW(sector_size);
 
 static ssize_t dpa_extents_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct nd_region *nd_region = to_nd_region(dev->parent);
-	struct nd_label_id label_id;
-	uuid_t *uuid = NULL;
-	int count = 0, i;
-	u32 flags = 0;
-
-	nvdimm_bus_lock(dev);
-	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		uuid = nspm->uuid;
-		flags = 0;
-	}
-
-	if (!uuid)
-		goto out;
-
-	nd_label_gen_id(&label_id, uuid, flags);
-	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-		struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
-		struct resource *res;
-
-		for_each_dpa_resource(ndd, res)
-			if (strcmp(res->name, label_id.id) == 0)
-				count++;
-	}
- out:
-	nvdimm_bus_unlock(dev);
-
-	return sprintf(buf, "%d\n", count);
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    struct nd_region *nd_region = to_nd_region(dev->parent);
+    struct nd_label_id label_id;
+    uuid_t *uuid = NULL;
+    int count = 0, i;
+    u32 flags = 0;
+    nvdimm_bus_lock(dev);
+    if (is_namespace_pmem(dev)) {
+        struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
+        uuid = nspm->uuid;
+        flags = 0;
+    }
+    if (!uuid)
+        goto out;
+    nd_label_gen_id(&label_id, uuid, flags);
+    for (i = 0; i < nd_region->ndr_mappings; i++) {
+        struct nd_mapping *nd_mapping = &nd_region->mapping[i];
+        struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
+        struct resource *res;
+        for_each_dpa_resource(ndd, res)
+            if (strcmp(res->name, label_id.id) == 0)
+                count++;
+    }
+out:
+    nvdimm_bus_unlock(dev);
+    ssize_t rc = sprintf(buf, "%d\n", count);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_RO(dpa_extents);
 
 static int btt_claim_class(struct device *dev)
 {
-	struct nd_region *nd_region = to_nd_region(dev->parent);
-	int i, loop_bitmask = 0;
-
-	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-		struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
-		struct nd_namespace_index *nsindex;
-
-		/*
-		 * If any of the DIMMs do not support labels the only
-		 * possible BTT format is v1.
-		 */
-		if (!ndd) {
-			loop_bitmask = 0;
-			break;
-		}
-
-		nsindex = to_namespace_index(ndd, ndd->ns_current);
-		if (nsindex == NULL)
-			loop_bitmask |= 1;
-		else {
-			/* check whether existing labels are v1.1 or v1.2 */
-			if (__le16_to_cpu(nsindex->major) == 1
-					&& __le16_to_cpu(nsindex->minor) == 1)
-				loop_bitmask |= 2;
-			else
-				loop_bitmask |= 4;
-		}
-	}
-	/*
-	 * If nsindex is null loop_bitmask's bit 0 will be set, and if an index
-	 * block is found, a v1.1 label for any mapping will set bit 1, and a
-	 * v1.2 label will set bit 2.
-	 *
-	 * At the end of the loop, at most one of the three bits must be set.
-	 * If multiple bits were set, it means the different mappings disagree
-	 * about their labels, and this must be cleaned up first.
-	 *
-	 * If all the label index blocks are found to agree, nsindex of NULL
-	 * implies labels haven't been initialized yet, and when they will,
-	 * they will be of the 1.2 format, so we can assume BTT2.0
-	 *
-	 * If 1.1 labels are found, we enforce BTT1.1, and if 1.2 labels are
-	 * found, we enforce BTT2.0
-	 *
-	 * If the loop was never entered, default to BTT1.1 (legacy namespaces)
-	 */
-	switch (loop_bitmask) {
-	case 0:
-	case 2:
-		return NVDIMM_CCLASS_BTT;
-	case 1:
-	case 4:
-		return NVDIMM_CCLASS_BTT2;
-	default:
-		return -ENXIO;
-	}
+    printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+    struct nd_region *nd_region = to_nd_region(dev->parent);
+    int i, loop_bitmask = 0;
+    for (i = 0; i < nd_region->ndr_mappings; i++) {
+        struct nd_mapping *nd_mapping = &nd_region->mapping[i];
+        struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
+        struct nd_namespace_index *nsindex;
+        if (!ndd) {
+            loop_bitmask = 0;
+            break;
+        }
+        nsindex = to_namespace_index(ndd, ndd->ns_current);
+        if (nsindex == NULL)
+            loop_bitmask |= 1;
+        else {
+            if (__le16_to_cpu(nsindex->major) == 1 && __le16_to_cpu(nsindex->minor) == 1)
+                loop_bitmask |= 2;
+            else
+                loop_bitmask |= 4;
+        }
+    }
+    int ret;
+    switch (loop_bitmask) {
+    case 0:
+    case 2:
+        ret = NVDIMM_CCLASS_BTT;
+        break;
+    case 1:
+    case 4:
+        ret = NVDIMM_CCLASS_BTT2;
+        break;
+    default:
+        ret = -ENXIO;
+        break;
+    }
+    printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+    return ret;
 }
 
 static ssize_t holder_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct nd_namespace_common *ndns = to_ndns(dev);
-	ssize_t rc;
-
-	device_lock(dev);
-	rc = sprintf(buf, "%s\n", ndns->claim ? dev_name(ndns->claim) : "");
-	device_unlock(dev);
-
-	return rc;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    struct nd_namespace_common *ndns = to_ndns(dev);
+    ssize_t rc;
+    device_lock(dev);
+    rc = sprintf(buf, "%s\n", ndns->claim ? dev_name(ndns->claim) : "");
+    device_unlock(dev);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_RO(holder);
 
 static int __holder_class_store(struct device *dev, const char *buf)
 {
-	struct nd_namespace_common *ndns = to_ndns(dev);
-
-	if (dev->driver || ndns->claim)
-		return -EBUSY;
-
-	if (sysfs_streq(buf, "btt")) {
-		int rc = btt_claim_class(dev);
-
-		if (rc < NVDIMM_CCLASS_NONE)
-			return rc;
-		ndns->claim_class = rc;
-	} else if (sysfs_streq(buf, "pfn"))
-		ndns->claim_class = NVDIMM_CCLASS_PFN;
-	else if (sysfs_streq(buf, "dax"))
-		ndns->claim_class = NVDIMM_CCLASS_DAX;
-	else if (sysfs_streq(buf, ""))
-		ndns->claim_class = NVDIMM_CCLASS_NONE;
-	else
-		return -EINVAL;
-
-	return 0;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, buf=%p pid=%d\n", __func__, dev, buf, current->pid);
+    struct nd_namespace_common *ndns = to_ndns(dev);
+    int rc = 0;
+    if (dev->driver || ndns->claim) {
+        printk(KERN_INFO "%s: EXIT: -EBUSY (driver/claim) pid=%d\n", __func__, current->pid);
+        return -EBUSY;
+    }
+    if (sysfs_streq(buf, "btt")) {
+        rc = btt_claim_class(dev);
+        if (rc < NVDIMM_CCLASS_NONE) {
+            printk(KERN_INFO "%s: EXIT: rc=%d (btt_claim_class) pid=%d\n", __func__, rc, current->pid);
+            return rc;
+        }
+        ndns->claim_class = rc;
+    } else if (sysfs_streq(buf, "pfn"))
+        ndns->claim_class = NVDIMM_CCLASS_PFN;
+    else if (sysfs_streq(buf, "dax"))
+        ndns->claim_class = NVDIMM_CCLASS_DAX;
+    else if (sysfs_streq(buf, ""))
+        ndns->claim_class = NVDIMM_CCLASS_NONE;
+    else {
+        printk(KERN_INFO "%s: EXIT: -EINVAL (invalid class) pid=%d\n", __func__, current->pid);
+        return -EINVAL;
+    }
+    printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
+    return 0;
 }
 
 static ssize_t holder_class_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
-	struct nd_region *nd_region = to_nd_region(dev->parent);
-	int rc;
-
-	device_lock(dev);
-	nvdimm_bus_lock(dev);
-	wait_nvdimm_bus_probe_idle(dev);
-	rc = __holder_class_store(dev, buf);
-	if (rc >= 0)
-		rc = nd_namespace_label_update(nd_region, dev);
-	dev_dbg(dev, "%s(%d)\n", rc < 0 ? "fail " : "", rc);
-	nvdimm_bus_unlock(dev);
-	device_unlock(dev);
-
-	return rc < 0 ? rc : len;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
+    struct nd_region *nd_region = to_nd_region(dev->parent);
+    int rc;
+    device_lock(dev);
+    nvdimm_bus_lock(dev);
+    wait_nvdimm_bus_probe_idle(dev);
+    rc = __holder_class_store(dev, buf);
+    if (rc >= 0)
+        rc = nd_namespace_label_update(nd_region, dev);
+    dev_dbg(dev, "%s(%d)\n", rc < 0 ? "fail " : "", rc);
+    nvdimm_bus_unlock(dev);
+    device_unlock(dev);
+    ssize_t ret = rc < 0 ? rc : len;
+    printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+    return ret;
 }
 
 static ssize_t holder_class_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct nd_namespace_common *ndns = to_ndns(dev);
-	ssize_t rc;
-
-	device_lock(dev);
-	if (ndns->claim_class == NVDIMM_CCLASS_NONE)
-		rc = sprintf(buf, "\n");
-	else if ((ndns->claim_class == NVDIMM_CCLASS_BTT) ||
-			(ndns->claim_class == NVDIMM_CCLASS_BTT2))
-		rc = sprintf(buf, "btt\n");
-	else if (ndns->claim_class == NVDIMM_CCLASS_PFN)
-		rc = sprintf(buf, "pfn\n");
-	else if (ndns->claim_class == NVDIMM_CCLASS_DAX)
-		rc = sprintf(buf, "dax\n");
-	else
-		rc = sprintf(buf, "<unknown>\n");
-	device_unlock(dev);
-
-	return rc;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    struct nd_namespace_common *ndns = to_ndns(dev);
+    ssize_t rc;
+    device_lock(dev);
+    if (ndns->claim_class == NVDIMM_CCLASS_NONE)
+        rc = sprintf(buf, "\n");
+    else if ((ndns->claim_class == NVDIMM_CCLASS_BTT) ||
+            (ndns->claim_class == NVDIMM_CCLASS_BTT2))
+        rc = sprintf(buf, "btt\n");
+    else if (ndns->claim_class == NVDIMM_CCLASS_PFN)
+        rc = sprintf(buf, "pfn\n");
+    else if (ndns->claim_class == NVDIMM_CCLASS_DAX)
+        rc = sprintf(buf, "dax\n");
+    else
+        rc = sprintf(buf, "<unknown>\n");
+    device_unlock(dev);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_RW(holder_class);
 
 static ssize_t mode_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct nd_namespace_common *ndns = to_ndns(dev);
-	struct device *claim;
-	char *mode;
-	ssize_t rc;
-
-	device_lock(dev);
-	claim = ndns->claim;
-	if (claim && is_nd_btt(claim))
-		mode = "safe";
-	else if (claim && is_nd_pfn(claim))
-		mode = "memory";
-	else if (claim && is_nd_dax(claim))
-		mode = "dax";
-	else if (!claim && pmem_should_map_pages(dev))
-		mode = "memory";
-	else
-		mode = "raw";
-	rc = sprintf(buf, "%s\n", mode);
-	device_unlock(dev);
-
-	return rc;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    struct nd_namespace_common *ndns = to_ndns(dev);
+    struct device *claim;
+    char *mode;
+    ssize_t rc;
+    device_lock(dev);
+    claim = ndns->claim;
+    if (claim && is_nd_btt(claim))
+        mode = "safe";
+    else if (claim && is_nd_pfn(claim))
+        mode = "memory";
+    else if (claim && is_nd_dax(claim))
+        mode = "dax";
+    else if (!claim && pmem_should_map_pages(dev))
+        mode = "memory";
+    else
+        mode = "raw";
+    rc = sprintf(buf, "%s\n", mode);
+    device_unlock(dev);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_RO(mode);
 
 static ssize_t force_raw_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
-	bool force_raw;
-	int rc = kstrtobool(buf, &force_raw);
-
-	if (rc)
-		return rc;
-
-	to_ndns(dev)->force_raw = force_raw;
-	return len;
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, attr, buf, len, current->pid);
+    bool force_raw;
+    int rc = kstrtobool(buf, &force_raw);
+    if (rc) {
+        printk(KERN_INFO "%s: EXIT: rc=%d (kstrtobool) pid=%d\n", __func__, rc, current->pid);
+        return rc;
+    }
+    to_ndns(dev)->force_raw = force_raw;
+    printk(KERN_INFO "%s: EXIT: len=%zu pid=%d\n", __func__, len, current->pid);
+    return len;
 }
 
 static ssize_t force_raw_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", to_ndns(dev)->force_raw);
+    printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
+    ssize_t rc = sprintf(buf, "%d\n", to_ndns(dev)->force_raw);
+    printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+    return rc;
 }
 static DEVICE_ATTR_RW(force_raw);
 
@@ -1434,23 +1456,24 @@ static struct attribute *nd_namespace_attributes[] = {
 static umode_t namespace_visible(struct kobject *kobj,
 		struct attribute *a, int n)
 {
-	struct device *dev = container_of(kobj, struct device, kobj);
-
-	if (is_namespace_pmem(dev)) {
-		if (a == &dev_attr_size.attr)
-			return 0644;
-
-		return a->mode;
-	}
-
-	/* base is_namespace_io() attributes */
-	if (a == &dev_attr_nstype.attr || a == &dev_attr_size.attr ||
-	    a == &dev_attr_holder.attr || a == &dev_attr_holder_class.attr ||
-	    a == &dev_attr_force_raw.attr || a == &dev_attr_mode.attr ||
-	    a == &dev_attr_resource.attr)
-		return a->mode;
-
-	return 0;
+    printk(KERN_INFO "%s: ENTRY: kobj=%p, a=%p, n=%d pid=%d\n", __func__, kobj, a, n, current->pid);
+    struct device *dev = container_of(kobj, struct device, kobj);
+    umode_t ret = 0;
+    if (is_namespace_pmem(dev)) {
+        if (a == &dev_attr_size.attr)
+            ret = 0644;
+        else
+            ret = a->mode;
+        printk(KERN_INFO "%s: EXIT: ret=%o (pmem) pid=%d\n", __func__, ret, current->pid);
+        return ret;
+    }
+    if (a == &dev_attr_nstype.attr || a == &dev_attr_size.attr ||
+        a == &dev_attr_holder.attr || a == &dev_attr_holder_class.attr ||
+        a == &dev_attr_force_raw.attr || a == &dev_attr_mode.attr ||
+        a == &dev_attr_resource.attr)
+        ret = a->mode;
+    printk(KERN_INFO "%s: EXIT: ret=%o pid=%d\n", __func__, ret, current->pid);
+    return ret;
 }
 
 static struct attribute_group nd_namespace_attribute_group = {
@@ -1965,18 +1988,23 @@ static int add_namespace_resource(struct nd_region *nd_region,
 
 static int cmp_dpa(const void *a, const void *b)
 {
-	const struct device *dev_a = *(const struct device **) a;
-	const struct device *dev_b = *(const struct device **) b;
-	struct nd_namespace_pmem *nspm_a, *nspm_b;
+    printk(KERN_INFO "%s: ENTRY: a=%p, b=%p pid=%d\n", __func__, a, b, current->pid);
+    const struct device *dev_a = *(const struct device **) a;
+    const struct device *dev_b = *(const struct device **) b;
+    struct nd_namespace_pmem *nspm_a, *nspm_b;
 
-	if (is_namespace_io(dev_a))
-		return 0;
+    if (is_namespace_io(dev_a)) {
+        printk(KERN_INFO "%s: EXIT: 0 (is_namespace_io) pid=%d\n", __func__, current->pid);
+        return 0;
+    }
 
-	nspm_a = to_nd_namespace_pmem(dev_a);
-	nspm_b = to_nd_namespace_pmem(dev_b);
+    nspm_a = to_nd_namespace_pmem(dev_a);
+    nspm_b = to_nd_namespace_pmem(dev_b);
 
-	return memcmp(&nspm_a->nsio.res.start, &nspm_b->nsio.res.start,
-			sizeof(resource_size_t));
+    int ret = memcmp(&nspm_a->nsio.res.start, &nspm_b->nsio.res.start,
+            sizeof(resource_size_t));
+    printk(KERN_INFO "%s: EXIT: ret=%d pid=%d\n", __func__, ret, current->pid);
+    return ret;
 }
 
 static struct device **scan_labels(struct nd_region *nd_region)
@@ -2115,23 +2143,25 @@ static struct device **create_namespaces(struct nd_region *nd_region)
 
 static void deactivate_labels(void *region)
 {
-	struct nd_region *nd_region = region;
-	int i;
+    printk(KERN_INFO "%s: ENTRY: region=%p pid=%d\n", __func__, region, current->pid);
+    struct nd_region *nd_region = region;
+    int i;
 
-	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-		struct nvdimm_drvdata *ndd = nd_mapping->ndd;
-		struct nvdimm *nvdimm = nd_mapping->nvdimm;
+    for (i = 0; i < nd_region->ndr_mappings; i++) {
+        struct nd_mapping *nd_mapping = &nd_region->mapping[i];
+        struct nvdimm_drvdata *ndd = nd_mapping->ndd;
+        struct nvdimm *nvdimm = nd_mapping->nvdimm;
 
-		mutex_lock(&nd_mapping->lock);
-		nd_mapping_free_labels(nd_mapping);
-		mutex_unlock(&nd_mapping->lock);
+        mutex_lock(&nd_mapping->lock);
+        nd_mapping_free_labels(nd_mapping);
+        mutex_unlock(&nd_mapping->lock);
 
-		put_ndd(ndd);
-		nd_mapping->ndd = NULL;
-		if (ndd)
-			atomic_dec(&nvdimm->busy);
-	}
+        put_ndd(ndd);
+        nd_mapping->ndd = NULL;
+        if (ndd)
+            atomic_dec(&nvdimm->busy);
+    }
+    printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static int init_active_labels(struct nd_region *nd_region)
