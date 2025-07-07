@@ -1486,243 +1486,95 @@ static bool is_namespace_io(const struct device *dev)
 {
 	return dev ? dev->type == &namespace_io_device_type : false;
 }
-
 struct nd_namespace_common *nvdimm_namespace_common_probe(struct device *dev)
-
 {
-
-
-	struct nd_btt *nd_btt = is_nd_btt(dev) ? to_nd_btt(dev) : NULL;
-
-
-	struct nd_pfn *nd_pfn = is_nd_pfn(dev) ? to_nd_pfn(dev) : NULL;
-
-
-	struct nd_dax *nd_dax = is_nd_dax(dev) ? to_nd_dax(dev) : NULL;
-
-
-	struct nd_namespace_common *ndns = NULL;
-
-
-	resource_size_t size;
-
-
-
-
-
-	if (nd_btt || nd_pfn || nd_dax) {
-
-
-		if (nd_btt)
-
-
-			ndns = nd_btt->ndns;
-
-
-		else if (nd_pfn)
-
-
-			ndns = nd_pfn->ndns;
-
-
-		else if (nd_dax)
-
-
-			ndns = nd_dax->nd_pfn.ndns;
-
-
-
-
-
-		if (!ndns)
-
-
-			return ERR_PTR(-ENODEV);
-
-
-
-
-
-		/*
-
-
-		 * Flush any in-progess probes / removals in the driver
-
-
-		 * for the raw personality of this namespace.
-
-
-		 */
-
-
-		device_lock(&ndns->dev);
-
-
-		device_unlock(&ndns->dev);
-
-
-		if (ndns->dev.driver) {
-
-
-			dev_dbg(&ndns->dev, "is active, can't bind %s\n",
-
-
-					dev_name(dev));
-
-
-			return ERR_PTR(-EBUSY);
-
-
-		}
-
-
-		if (dev_WARN_ONCE(&ndns->dev, ndns->claim != dev,
-
-
-					"host (%s) vs claim (%s) mismatch\n",
-
-
-					dev_name(dev),
-
-
-					dev_name(ndns->claim)))
-
-
-			return ERR_PTR(-ENXIO);
-
-
-	} else {
-
-
-		ndns = to_ndns(dev);
-
-
-		if (ndns->claim) {
-
-
-			dev_dbg(dev, "claimed by %s, failing probe\n",
-
-
-				dev_name(ndns->claim));
-
-
-
-
-
-			return ERR_PTR(-ENXIO);
-
-
-		}
-
-
-	}
-
-
-
-
-
-	if (nvdimm_namespace_locked(ndns))
-
-
-		return ERR_PTR(-EACCES);
-
-
-
-
-
-	size = nvdimm_namespace_capacity(ndns);
-
-
-	if (size < ND_MIN_NAMESPACE_SIZE) {
-
-
-		dev_dbg(&ndns->dev, "%pa, too small must be at least %#x\n",
-
-
-				&size, ND_MIN_NAMESPACE_SIZE);
-
-		return ERR_PTR(-ENODEV);
-
-	}
-
-
-
-
-
-	/*
-
-
-	 * Note, alignment validation for fsdax and devdax mode
-
-
-	 * namespaces happens in nd_pfn_validate() where infoblock
-
-
-	 * padding parameters can be applied.
-
-
-	 */
-
-
-	if (pmem_should_map_pages(dev)) {
-
-
-		struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
-
-
-		struct resource *res = &nsio->res;
-
-
-
-
-
-		if (!IS_ALIGNED(res->start | (res->end + 1),
-
-
-					memremap_compat_align())) {
-
-
-			dev_err(&ndns->dev, "%pr misaligned, unable to map\n", res);
-
-
-			return ERR_PTR(-EOPNOTSUPP);
-
-
-		}
-
-
-	}
-
-
-
-
-
-	if (is_namespace_pmem(&ndns->dev)) {
-
-
-		struct nd_namespace_pmem *nspm;
-
-
-
-
-
-		nspm = to_nd_namespace_pmem(&ndns->dev);
-
-
-		if (uuid_not_set(nspm->uuid, &ndns->dev, __func__))
-
-
-			return ERR_PTR(-ENODEV);
-
-	}
-
-
-
-
-
-	return ndns;
-
+    printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
+    struct nd_btt *nd_btt = is_nd_btt(dev) ? to_nd_btt(dev) : NULL;
+    struct nd_pfn *nd_pfn = is_nd_pfn(dev) ? to_nd_pfn(dev) : NULL;
+    struct nd_dax *nd_dax = is_nd_dax(dev) ? to_nd_dax(dev) : NULL;
+    struct nd_namespace_common *ndns = NULL;
+    resource_size_t size;
+
+    if (nd_btt || nd_pfn || nd_dax) {
+        if (nd_btt)
+            ndns = nd_btt->ndns;
+        else if (nd_pfn)
+            ndns = nd_pfn->ndns;
+        else if (nd_dax)
+            ndns = nd_dax->nd_pfn.ndns;
+
+        if (!ndns) {
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENODEV) (no ndns) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-ENODEV);
+        }
+
+        /*
+         * Flush any in-progess probes / removals in the driver
+         * for the raw personality of this namespace.
+         */
+        device_lock(&ndns->dev);
+        device_unlock(&ndns->dev);
+        if (ndns->dev.driver) {
+            dev_dbg(&ndns->dev, "is active, can't bind %s\n", dev_name(dev));
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-EBUSY) (active) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-EBUSY);
+        }
+        if (dev_WARN_ONCE(&ndns->dev, ndns->claim != dev,
+                    "host (%s) vs claim (%s) mismatch\n",
+                    dev_name(dev),
+                    dev_name(ndns->claim))) {
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENXIO) (claim mismatch) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-ENXIO);
+        }
+    } else {
+        ndns = to_ndns(dev);
+        if (ndns->claim) {
+            dev_dbg(dev, "claimed by %s, failing probe\n", dev_name(ndns->claim));
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENXIO) (already claimed) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-ENXIO);
+        }
+    }
+
+    if (nvdimm_namespace_locked(ndns)) {
+        printk(KERN_INFO "%s: EXIT: ERR_PTR(-EACCES) (locked) pid=%d\n", __func__, current->pid);
+        return ERR_PTR(-EACCES);
+    }
+
+    size = nvdimm_namespace_capacity(ndns);
+    if (size < ND_MIN_NAMESPACE_SIZE) {
+        dev_dbg(&ndns->dev, "%pa, too small must be at least %#x\n", &size, ND_MIN_NAMESPACE_SIZE);
+        printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENODEV) (too small) pid=%d\n", __func__, current->pid);
+        return ERR_PTR(-ENODEV);
+    }
+
+    /*
+     * Note, alignment validation for fsdax and devdax mode
+     * namespaces happens in nd_pfn_validate() where infoblock
+     * padding parameters can be applied.
+     */
+    if (pmem_should_map_pages(dev)) {
+        struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
+        struct resource *res = &nsio->res;
+
+        if (!IS_ALIGNED(res->start | (res->end + 1), memremap_compat_align())) {
+            dev_err(&ndns->dev, "%pr misaligned, unable to map\n", res);
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-EOPNOTSUPP) (misaligned) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-EOPNOTSUPP);
+        }
+    }
+
+    if (is_namespace_pmem(&ndns->dev)) {
+        struct nd_namespace_pmem *nspm;
+        nspm = to_nd_namespace_pmem(&ndns->dev);
+        if (uuid_not_set(nspm->uuid, &ndns->dev, __func__)) {
+            printk(KERN_INFO "%s: EXIT: ERR_PTR(-ENODEV) (uuid not set) pid=%d\n", __func__, current->pid);
+            return ERR_PTR(-ENODEV);
+        }
+    }
+    printk(KERN_INFO "%s: EXIT: ndns=%p pid=%d\n", __func__, ndns, current->pid);
+    return ndns;
 }
+EXPORT_SYMBOL(nvdimm_namespace_common_probe);
 int devm_namespace_enable(struct device *dev, struct nd_namespace_common *ndns,
 		resource_size_t size)
 {
