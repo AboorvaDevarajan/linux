@@ -16,6 +16,7 @@ struct of_pmem_private {
 
 static int of_pmem_region_probe(struct platform_device *pdev)
 {
+	printk(KERN_INFO "%s: ENTRY: pdev=%p pid=%d\n", __func__, pdev, current->pid);
 	struct of_pmem_private *priv;
 	struct device_node *np;
 	struct nvdimm_bus *bus;
@@ -23,17 +24,22 @@ static int of_pmem_region_probe(struct platform_device *pdev)
 	int i;
 
 	np = dev_of_node(&pdev->dev);
-	if (!np)
+	if (!np) {
+		printk(KERN_INFO "%s: EXIT: -ENXIO pid=%d\n", __func__, current->pid);
 		return -ENXIO;
+	}
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-	if (!priv)
+	if (!priv) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
+	}
 
 	priv->bus_desc.provider_name = devm_kstrdup(&pdev->dev, pdev->name,
 							GFP_KERNEL);
 	if (!priv->bus_desc.provider_name) {
 		kfree(priv);
+		printk(KERN_INFO "%s: EXIT: -ENOMEM (provider_name) pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
 	}
 
@@ -43,6 +49,7 @@ static int of_pmem_region_probe(struct platform_device *pdev)
 	priv->bus = bus = nvdimm_bus_register(&pdev->dev, &priv->bus_desc);
 	if (!bus) {
 		kfree(priv);
+		printk(KERN_INFO "%s: EXIT: -ENODEV (bus) pid=%d\n", __func__, current->pid);
 		return -ENODEV;
 	}
 	platform_set_drvdata(pdev, priv);
@@ -81,15 +88,18 @@ static int of_pmem_region_probe(struct platform_device *pdev)
 					ndr_desc.res, np);
 	}
 
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static void of_pmem_region_remove(struct platform_device *pdev)
 {
+	printk(KERN_INFO "%s: ENTRY: pdev=%p pid=%d\n", __func__, pdev, current->pid);
 	struct of_pmem_private *priv = platform_get_drvdata(pdev);
 
 	nvdimm_bus_unregister(priv->bus);
 	kfree(priv);
+	printk(KERN_INFO "%s: EXIT pid=%d\n", __func__, current->pid);
 }
 
 static const struct of_device_id of_pmem_region_match[] = {
