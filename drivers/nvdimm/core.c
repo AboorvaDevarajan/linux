@@ -49,11 +49,15 @@ EXPORT_SYMBOL(nvdimm_bus_unlock);
 
 bool is_nvdimm_bus_locked(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p pid=%d\n", __func__, dev, current->pid);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
-
-	if (!nvdimm_bus)
+	if (!nvdimm_bus) {
+		printk(KERN_INFO "%s: EXIT: false (no nvdimm_bus) pid=%d\n", __func__, current->pid);
 		return false;
-	return mutex_is_locked(&nvdimm_bus->reconfig_mutex);
+	}
+	bool ret = mutex_is_locked(&nvdimm_bus->reconfig_mutex);
+	printk(KERN_INFO "%s: EXIT: %d pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 EXPORT_SYMBOL(is_nvdimm_bus_locked);
 
@@ -73,12 +77,16 @@ struct nvdimm_map {
 static struct nvdimm_map *find_nvdimm_map(struct device *dev,
 		resource_size_t offset)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, offset=%pa pid=%d\n", __func__, dev, &offset, current->pid);
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
 	struct nvdimm_map *nvdimm_map;
 
 	list_for_each_entry(nvdimm_map, &nvdimm_bus->mapping_list, list)
-		if (nvdimm_map->offset == offset)
+		if (nvdimm_map->offset == offset) {
+			printk(KERN_INFO "%s: EXIT: nvdimm_map=%p pid=%d\n", __func__, nvdimm_map, current->pid);
 			return nvdimm_map;
+		}
+	printk(KERN_INFO "%s: EXIT: NULL pid=%d\n", __func__, current->pid);
 	return NULL;
 }
 
@@ -240,27 +248,36 @@ EXPORT_SYMBOL_GPL(to_nvdimm_bus_dev);
 int nd_uuid_store(struct device *dev, uuid_t **uuid_out, const char *buf,
 		size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, uuid_out=%p, buf=%p, len=%zu pid=%d\n", __func__, dev, uuid_out, buf, len, current->pid);
 	uuid_t uuid;
 	int rc;
 
-	if (dev->driver)
+	if (dev->driver) {
+		printk(KERN_INFO "%s: EXIT: -EBUSY (driver attached) pid=%d\n", __func__, current->pid);
 		return -EBUSY;
+	}
 
 	rc = uuid_parse(buf, &uuid);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (uuid_parse) pid=%d\n", __func__, rc, current->pid);
 		return rc;
+	}
 
 	kfree(*uuid_out);
 	*uuid_out = kmemdup(&uuid, sizeof(uuid), GFP_KERNEL);
-	if (!(*uuid_out))
+	if (!(*uuid_out)) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM (kmemdup) pid=%d\n", __func__, current->pid);
 		return -ENOMEM;
+	}
 
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 ssize_t nd_size_select_show(unsigned long current_size,
 		const unsigned long *supported, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: current_size=%lu, supported=%p, buf=%p pid=%d\n", __func__, current_size, supported, buf, current->pid);
 	ssize_t len = 0;
 	int i;
 
@@ -270,21 +287,27 @@ ssize_t nd_size_select_show(unsigned long current_size,
 		else
 			len += sprintf(buf + len, "%ld ", supported[i]);
 	len += sprintf(buf + len, "\n");
+	printk(KERN_INFO "%s: EXIT: len=%zd pid=%d\n", __func__, len, current->pid);
 	return len;
 }
 
 ssize_t nd_size_select_store(struct device *dev, const char *buf,
 		unsigned long *current_size, const unsigned long *supported)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, buf=%p, current_size=%p, supported=%p pid=%d\n", __func__, dev, buf, current_size, supported, current->pid);
 	unsigned long lbasize;
 	int rc, i;
 
-	if (dev->driver)
+	if (dev->driver) {
+		printk(KERN_INFO "%s: EXIT: -EBUSY (driver attached) pid=%d\n", __func__, current->pid);
 		return -EBUSY;
+	}
 
 	rc = kstrtoul(buf, 0, &lbasize);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtoul) pid=%d\n", __func__, rc, current->pid);
 		return rc;
+	}
 
 	for (i = 0; supported[i]; i++)
 		if (lbasize == supported[i])
@@ -292,8 +315,10 @@ ssize_t nd_size_select_store(struct device *dev, const char *buf,
 
 	if (supported[i]) {
 		*current_size = lbasize;
+		printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 		return 0;
 	} else {
+		printk(KERN_INFO "%s: EXIT: -EINVAL (not supported) pid=%d\n", __func__, current->pid);
 		return -EINVAL;
 	}
 }
@@ -301,6 +326,7 @@ ssize_t nd_size_select_store(struct device *dev, const char *buf,
 static ssize_t commands_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	int cmd, len = 0;
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
@@ -308,62 +334,79 @@ static ssize_t commands_show(struct device *dev,
 	for_each_set_bit(cmd, &nd_desc->cmd_mask, BITS_PER_LONG)
 		len += sprintf(buf + len, "%s ", nvdimm_bus_cmd_name(cmd));
 	len += sprintf(buf + len, "\n");
+	printk(KERN_INFO "%s: EXIT: len=%d pid=%d\n", __func__, len, current->pid);
 	return len;
 }
 static DEVICE_ATTR_RO(commands);
 
 static const char *nvdimm_bus_provider(struct nvdimm_bus *nvdimm_bus)
 {
+	printk(KERN_INFO "%s: ENTRY: nvdimm_bus=%p pid=%d\n", __func__, nvdimm_bus, current->pid);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	struct device *parent = nvdimm_bus->dev.parent;
 
-	if (nd_desc->provider_name)
+	if (nd_desc->provider_name) {
+		printk(KERN_INFO "%s: EXIT: provider_name=%s pid=%d\n", __func__, nd_desc->provider_name, current->pid);
 		return nd_desc->provider_name;
-	else if (parent)
+	} else if (parent) {
+		printk(KERN_INFO "%s: EXIT: parent_name=%s pid=%d\n", __func__, dev_name(parent), current->pid);
 		return dev_name(parent);
-	else
+	} else {
+		printk(KERN_INFO "%s: EXIT: unknown pid=%d\n", __func__, current->pid);
 		return "unknown";
+	}
 }
 
 static ssize_t provider_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
-
-	return sprintf(buf, "%s\n", nvdimm_bus_provider(nvdimm_bus));
+	ssize_t rc = sprintf(buf, "%s\n", nvdimm_bus_provider(nvdimm_bus));
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	return rc;
 }
 static DEVICE_ATTR_RO(provider);
 
 static int flush_namespaces(struct device *dev, void *data)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, data=%p pid=%d\n", __func__, dev, data, current->pid);
 	device_lock(dev);
 	device_unlock(dev);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static int flush_regions_dimms(struct device *dev, void *data)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, data=%p pid=%d\n", __func__, dev, data, current->pid);
 	device_lock(dev);
 	device_unlock(dev);
 	device_for_each_child(dev, NULL, flush_namespaces);
+	printk(KERN_INFO "%s: EXIT: 0 pid=%d\n", __func__, current->pid);
 	return 0;
 }
 
 static ssize_t wait_probe_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	int rc;
 
 	if (nd_desc->flush_probe) {
 		rc = nd_desc->flush_probe(nd_desc);
-		if (rc)
+		if (rc) {
+			printk(KERN_INFO "%s: EXIT: rc=%d (flush_probe) pid=%d\n", __func__, rc, current->pid);
 			return rc;
+		}
 	}
 	nd_synchronize();
 	device_for_each_child(dev, NULL, flush_regions_dimms);
-	return sprintf(buf, "1\n");
+	ssize_t ret = sprintf(buf, "1\n");
+	printk(KERN_INFO "%s: EXIT: ret=%zd pid=%d\n", __func__, ret, current->pid);
+	return ret;
 }
 static DEVICE_ATTR_RO(wait_probe);
 
@@ -381,23 +424,33 @@ static const struct attribute_group nvdimm_bus_attribute_group = {
 static ssize_t capability_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p pid=%d\n", __func__, dev, attr, buf, current->pid);
 	struct nvdimm_bus *nvdimm_bus = to_nvdimm_bus(dev);
 	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	enum nvdimm_fwa_capability cap;
 
-	if (!nd_desc->fw_ops)
+	if (!nd_desc->fw_ops) {
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (no fw_ops) pid=%d\n", __func__, current->pid);
 		return -EOPNOTSUPP;
+	}
 
 	cap = nd_desc->fw_ops->capability(nd_desc);
 
+	ssize_t rc;
 	switch (cap) {
 	case NVDIMM_FWA_CAP_QUIESCE:
-		return sprintf(buf, "quiesce\n");
+		rc = sprintf(buf, "quiesce\n");
+		break;
 	case NVDIMM_FWA_CAP_LIVE:
-		return sprintf(buf, "live\n");
+		rc = sprintf(buf, "live\n");
+		break;
 	default:
+		printk(KERN_INFO "%s: EXIT: -EOPNOTSUPP (unknown cap) pid=%d\n", __func__, current->pid);
 		return -EOPNOTSUPP;
 	}
+
+	printk(KERN_INFO "%s: EXIT: rc=%zd pid=%d\n", __func__, rc, current->pid);
+	return rc;
 }
 
 static DEVICE_ATTR_RO(capability);
