@@ -15,12 +15,14 @@
 
 static int nvdimm_probe(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm_drvdata *ndd;
 	int rc;
 
 	rc = nvdimm_security_setup_events(dev);
 	if (rc < 0) {
 		dev_err(dev, "security event setup failed: %d\n", rc);
+		printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 		return rc;
 	}
 
@@ -29,6 +31,7 @@ static int nvdimm_probe(struct device *dev)
 		/* not required for non-aliased nvdimm, ex. NVDIMM-N */
 		if (rc == -ENOTTY)
 			rc = 0;
+		printk(KERN_INFO "%s: EXIT: rc=%d\n", __func__, rc);
 		return rc;
 	}
 
@@ -40,8 +43,10 @@ static int nvdimm_probe(struct device *dev)
 	nvdimm_clear_locked(dev);
 
 	ndd = kzalloc(sizeof(*ndd), GFP_KERNEL);
-	if (!ndd)
+	if (!ndd) {
+		printk(KERN_INFO "%s: EXIT: -ENOMEM\n", __func__);
 		return -ENOMEM;
+	}
 
 	dev_set_drvdata(dev, ndd);
 	ndd->dpa.name = dev_name(dev);
@@ -106,21 +111,25 @@ static int nvdimm_probe(struct device *dev)
 	if (rc)
 		goto err;
 
+	printk(KERN_INFO "%s: EXIT: rc=0\n", __func__);
 	return 0;
 
  err:
 	put_ndd(ndd);
+	printk(KERN_INFO "%s: EXIT: rc=%d (err)\n", __func__, rc);
 	return rc;
 }
 
 static void nvdimm_remove(struct device *dev)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p\n", __func__, dev);
 	struct nvdimm_drvdata *ndd = dev_get_drvdata(dev);
 
 	nvdimm_bus_lock(dev);
 	dev_set_drvdata(dev, NULL);
 	nvdimm_bus_unlock(dev);
 	put_ndd(ndd);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 static struct nd_device_driver nvdimm_driver = {
@@ -134,12 +143,17 @@ static struct nd_device_driver nvdimm_driver = {
 
 int __init nvdimm_init(void)
 {
-	return nd_driver_register(&nvdimm_driver);
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
+	int ret = nd_driver_register(&nvdimm_driver);
+	printk(KERN_INFO "%s: EXIT: ret=%d\n", __func__, ret);
+	return ret;
 }
 
 void nvdimm_exit(void)
 {
+	printk(KERN_INFO "%s: ENTRY\n", __func__);
 	driver_unregister(&nvdimm_driver.drv);
+	printk(KERN_INFO "%s: EXIT\n", __func__);
 }
 
 MODULE_ALIAS_ND_DEVICE(ND_DEVICE_DIMM);
