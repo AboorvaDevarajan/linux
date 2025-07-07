@@ -1628,6 +1628,8 @@ static struct device **create_namespace_io(struct nd_region *nd_region)
 	res = &nsio->res;
 	res->name = dev_name(&nd_region->dev);
 	res->flags = IORESOURCE_MEM;
+	res->start = nd_region->ndr_start;
+	res->end = res->start + nd_region->ndr_size - 1;
 
 	devs[0] = dev;
 	return devs;
