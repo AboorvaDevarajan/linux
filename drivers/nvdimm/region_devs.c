@@ -272,86 +272,96 @@ EXPORT_SYMBOL(nd_region_to_nstype);
 
 static unsigned long long region_size(struct nd_region *nd_region)
 {
+	printk(KERN_INFO "%s: ENTRY: nd_region=%p\n", __func__, nd_region);
 	if (is_memory(&nd_region->dev)) {
+		printk(KERN_INFO "%s: EXIT: ndr_size=%llu\n", __func__, nd_region->ndr_size);
 		return nd_region->ndr_size;
 	} else if (nd_region->ndr_mappings == 1) {
 		struct nd_mapping *nd_mapping = &nd_region->mapping[0];
-
+		printk(KERN_INFO "%s: EXIT: mapping[0].size=%llu\n", __func__, nd_mapping->size);
 		return nd_mapping->size;
 	}
-
+	printk(KERN_INFO "%s: EXIT: 0\n", __func__);
 	return 0;
 }
 
-static ssize_t size_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t size_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	return sprintf(buf, "%llu\n", region_size(nd_region));
+	ssize_t ret = sprintf(buf, "%llu\n", region_size(nd_region));
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(size);
 
-static ssize_t deep_flush_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t deep_flush_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	/*
-	 * NOTE: in the nvdimm_has_flush() error case this attribute is
-	 * not visible.
-	 */
-	return sprintf(buf, "%d\n", nvdimm_has_flush(nd_region));
+	ssize_t ret = sprintf(buf, "%d\n", nvdimm_has_flush(nd_region));
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 
-static ssize_t deep_flush_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t len)
+static ssize_t deep_flush_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t len)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p, len=%zu\n", __func__, dev, attr, buf, len);
 	bool flush;
 	int rc = kstrtobool(buf, &flush);
 	struct nd_region *nd_region = to_nd_region(dev);
 
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (kstrtobool failed)\n", __func__, rc);
 		return rc;
-	if (!flush)
+	}
+	if (!flush) {
+		printk(KERN_INFO "%s: EXIT: -EINVAL (flush is false)\n", __func__);
 		return -EINVAL;
+	}
 	rc = nvdimm_flush(nd_region, NULL);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%d (nvdimm_flush failed)\n", __func__, rc);
 		return rc;
-
+	}
+	printk(KERN_INFO "%s: EXIT: len=%zu\n", __func__, len);
 	return len;
 }
 static DEVICE_ATTR_RW(deep_flush);
 
-static ssize_t mappings_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t mappings_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	return sprintf(buf, "%d\n", nd_region->ndr_mappings);
+	ssize_t ret = sprintf(buf, "%d\n", nd_region->ndr_mappings);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(mappings);
 
-static ssize_t nstype_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t nstype_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
-
-	return sprintf(buf, "%d\n", nd_region_to_nstype(nd_region));
+	ssize_t ret = sprintf(buf, "%d\n", nd_region_to_nstype(nd_region));
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(nstype);
 
-static ssize_t set_cookie_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t set_cookie_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 	ssize_t rc = 0;
 
 	if (is_memory(dev) && nd_set)
 		/* pass, should be precluded by region_visible */;
-	else
+	else {
+		printk(KERN_INFO "%s: EXIT: -ENXIO (not memory or no nd_set)\n", __func__);
 		return -ENXIO;
+	}
 
 	/*
 	 * The cookie to show depends on which specification of the
@@ -378,9 +388,13 @@ static ssize_t set_cookie_show(struct device *dev,
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
 
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 		return rc;
-	return sprintf(buf, "%#llx\n", nd_set->cookie1);
+	}
+	ssize_t ret = sprintf(buf, "%#llx\n", nd_set->cookie1);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(set_cookie);
 
@@ -421,49 +435,43 @@ resource_size_t nd_region_allocatable_dpa(struct nd_region *nd_region)
 	return avail * nd_region->ndr_mappings;
 }
 
-static ssize_t available_size_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t available_size_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long long available = 0;
-
-	/*
-	 * Flush in-flight updates and grab a snapshot of the available
-	 * size.  Of course, this value is potentially invalidated the
-	 * memory nvdimm_bus_lock() is dropped, but that's userspace's
-	 * problem to not race itself.
-	 */
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	wait_nvdimm_bus_probe_idle(dev);
 	available = nd_region_available_dpa(nd_region);
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
-
-	return sprintf(buf, "%llu\n", available);
+	ssize_t ret = sprintf(buf, "%llu\n", available);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(available_size);
 
-static ssize_t max_available_extent_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t max_available_extent_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	unsigned long long available = 0;
-
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	wait_nvdimm_bus_probe_idle(dev);
 	available = nd_region_allocatable_dpa(nd_region);
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
-
-	return sprintf(buf, "%llu\n", available);
+	ssize_t ret = sprintf(buf, "%llu\n", available);
+	printk(KERN_INFO "%s: EXIT: ret=%zd\n", __func__, ret);
+	return ret;
 }
 static DEVICE_ATTR_RO(max_available_extent);
 
-static ssize_t init_namespaces_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t init_namespaces_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region_data *ndrd = dev_get_drvdata(dev);
 	ssize_t rc;
 
@@ -473,14 +481,14 @@ static ssize_t init_namespaces_show(struct device *dev,
 	else
 		rc = -ENXIO;
 	nvdimm_bus_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(init_namespaces);
 
-static ssize_t namespace_seed_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t namespace_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -490,13 +498,14 @@ static ssize_t namespace_seed_show(struct device *dev,
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(namespace_seed);
 
-static ssize_t btt_seed_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t btt_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -506,14 +515,14 @@ static ssize_t btt_seed_show(struct device *dev,
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(btt_seed);
 
-static ssize_t pfn_seed_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t pfn_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -523,14 +532,14 @@ static ssize_t pfn_seed_show(struct device *dev,
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(pfn_seed);
 
-static ssize_t dax_seed_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t dax_seed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
+	printk(KERN_INFO "%s: ENTRY: dev=%p, attr=%p, buf=%p\n", __func__, dev, attr, buf);
 	struct nd_region *nd_region = to_nd_region(dev);
 	ssize_t rc;
 
@@ -540,7 +549,7 @@ static ssize_t dax_seed_show(struct device *dev,
 	else
 		rc = sprintf(buf, "\n");
 	nvdimm_bus_unlock(dev);
-
+	printk(KERN_INFO "%s: EXIT: rc=%zd\n", __func__, rc);
 	return rc;
 }
 static DEVICE_ATTR_RO(dax_seed);
