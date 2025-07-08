@@ -337,7 +337,7 @@ static void __initialize_form1_numa_distance(const __be32 *associativity,
 	pr_info("[HOTPLUG TRACE:NUMA] EXIT: __initialize_form1_numa_distance\n");
 }
 
-void initialize_form1_numa_distance(const __be32 *associativity)
+static void initialize_form1_numa_distance(const __be32 *associativity)
 {
 	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: initialize_form1_numa_distance(associativity=%p)\n", associativity);
 	if (!associativity) {
