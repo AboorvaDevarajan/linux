@@ -364,7 +364,7 @@ static void initialize_form1_numa_distance(const __be32 *associativity)
 /*
  * Used to update distance information w.r.t newly added node.
  */
-static void update_numa_distance(struct device_node *node)
+void update_numa_distance(struct device_node *node)
 {
 	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: update_numa_distance(node=%p)\n", node);
 	int nid;
