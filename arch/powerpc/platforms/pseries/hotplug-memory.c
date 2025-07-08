@@ -23,14 +23,17 @@
 
 static void dlpar_free_property(struct property *prop)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_free_property(prop=%p)\n", prop);
 	kfree(prop->name);
 	kfree(prop->value);
 	kfree(prop);
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_free_property returns void\n");
 }
 
 static struct property *dlpar_clone_property(struct property *prop,
 					     u32 prop_size)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_clone_property(prop=%p, prop_size=%u)\n", prop, prop_size);
 	struct property *new_prop;
 
 	new_prop = kzalloc(sizeof(*new_prop), GFP_KERNEL);
@@ -48,6 +51,7 @@ static struct property *dlpar_clone_property(struct property *prop,
 	new_prop->length = prop_size;
 
 	of_property_set_flag(new_prop, OF_DYNAMIC);
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_clone_property returns prop=%p\n", new_prop);
 	return new_prop;
 }
 
@@ -55,6 +59,7 @@ static bool find_aa_index(struct device_node *dr_node,
 			 struct property *ala_prop,
 			 const u32 *lmb_assoc, u32 *aa_index)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: find_aa_index(dr_node=%p, ala_prop=%p, lmb_assoc=%p, aa_index=%p)\n", dr_node, ala_prop, lmb_assoc, aa_index);
 	__be32 *assoc_arrays;
 	u32 new_prop_size;
 	struct property *new_prop;
@@ -80,6 +85,7 @@ static bool find_aa_index(struct device_node *dr_node,
 			continue;
 
 		*aa_index = i;
+		pr_info("[HOTPLUG TRACE] EXIT: find_aa_index returns true\n");
 		return true;
 	}
 
@@ -105,11 +111,13 @@ static bool find_aa_index(struct device_node *dr_node,
 	 * to the end of the lookup array.
 	 */
 	*aa_index = be32_to_cpu(assoc_arrays[0]) - 1;
+	pr_info("[HOTPLUG TRACE] EXIT: find_aa_index returns false\n");
 	return true;
 }
 
 static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: update_lmb_associativity_index(lmb=%p)\n", lmb);
 	struct device_node *parent, *lmb_node, *dr_node;
 	struct property *ala_prop;
 	const u32 *lmb_assoc;
@@ -159,6 +167,7 @@ static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 	}
 
 	lmb->aa_index = aa_index;
+	pr_info("[HOTPLUG TRACE] EXIT: update_lmb_associativity_index returns %d\n", 0);
 	return 0;
 }
 
@@ -569,6 +578,7 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index)
 
 static int dlpar_add_lmb(struct drmem_lmb *lmb)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_add_lmb(lmb=%p)\n", lmb);
 	unsigned long block_sz;
 	int nid, rc;
 
@@ -606,6 +616,7 @@ static int dlpar_add_lmb(struct drmem_lmb *lmb)
 		lmb->flags |= DRCONF_MEM_ASSIGNED;
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_add_lmb returns %d\n", rc);
 	return rc;
 }
 
