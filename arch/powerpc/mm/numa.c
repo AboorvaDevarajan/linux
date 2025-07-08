@@ -300,14 +300,25 @@ int of_node_to_nid(struct device_node *device)
 EXPORT_SYMBOL(of_node_to_nid);
 
 static void __initialize_form1_numa_distance(const __be32 *associativity,
-					     int max_array_sz)
+					     int array_sz)
 {
+	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: __initialize_form1_numa_distance(associativity=%p, array_sz=%d)\n", associativity, array_sz);
+	if (!associativity || array_sz <= 0) {
+		pr_info("[HOTPLUG TRACE:NUMA] Invalid input: associativity=%p, array_sz=%d, exiting\n", associativity, array_sz);
+		return;
+	}
+	pr_info("[HOTPLUG TRACE:NUMA] associativity values: ");
+	for (int i = 0; i < array_sz; i++) {
+		pr_cont("%08x ", be32_to_cpu(associativity[i]));
+	}
+	pr_cont("\n");
+
 	int i, nid;
 
 	if (affinity_form != FORM1_AFFINITY)
 		return;
 
-	nid = __associativity_to_nid(associativity, max_array_sz);
+	nid = __associativity_to_nid(associativity, array_sz);
 	if (nid != NUMA_NO_NODE) {
 		for (i = 0; i < distance_ref_points_depth; i++) {
 			const __be32 *entry;
@@ -316,22 +327,38 @@ static void __initialize_form1_numa_distance(const __be32 *associativity,
 			/*
 			 * broken hierarchy, return with broken distance table
 			 */
-			if (WARN(index >= max_array_sz, "Broken ibm,associativity property"))
+			if (WARN(index >= array_sz, "Broken ibm,associativity property"))
 				return;
 
 			entry = &associativity[index];
 			distance_lookup_table[nid][i] = of_read_number(entry, 1);
 		}
 	}
+	pr_info("[HOTPLUG TRACE:NUMA] EXIT: __initialize_form1_numa_distance\n");
 }
 
-static void initialize_form1_numa_distance(const __be32 *associativity)
+void initialize_form1_numa_distance(const __be32 *associativity)
 {
+	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: initialize_form1_numa_distance(associativity=%p)\n", associativity);
+	if (!associativity) {
+		pr_info("[HOTPLUG TRACE:NUMA] associativity is NULL, exiting\n");
+		return;
+	}
+	// Log the associativity values (assume first value is count)
+	int count = be32_to_cpu(associativity[0]);
+	pr_info("[HOTPLUG TRACE:NUMA] associativity count=%d\n", count);
+	pr_info("[HOTPLUG TRACE:NUMA] associativity values: ");
+	for (int i = 0; i <= count; i++) {
+		pr_cont("%08x ", be32_to_cpu(associativity[i]));
+	}
+	pr_cont("\n");
+
 	int array_sz;
 
 	array_sz = of_read_number(associativity, 1);
 	/* Skip the first element in the associativity array */
 	__initialize_form1_numa_distance(associativity + 1, array_sz);
+	pr_info("[HOTPLUG TRACE:NUMA] EXIT: initialize_form1_numa_distance\n");
 }
 
 /*
@@ -629,26 +656,33 @@ static int __init get_nid_and_numa_distance(struct drmem_lmb *lmb)
  */
 int of_drconf_to_nid_single(struct drmem_lmb *lmb)
 {
-	struct assoc_arrays aa = { .arrays = NULL };
-	int default_nid = NUMA_NO_NODE;
-	int nid = default_nid;
-	int rc, index;
+	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: of_drconf_to_nid_single(lmb=%p, drc_index=0x%x, aa_index=%u)\n", lmb, lmb ? lmb->drc_index : 0, lmb ? lmb->aa_index : 0);
+	int nid = NUMA_NO_NODE;
+	const u32 *assoc = NULL;
 
-	if ((primary_domain_index < 0) || !numa_enabled)
-		return default_nid;
-
-	rc = of_get_assoc_arrays(&aa);
-	if (rc)
-		return default_nid;
-
-	if (primary_domain_index <= aa.array_sz &&
-	    !(lmb->flags & DRCONF_MEM_AI_INVALID) && lmb->aa_index < aa.n_arrays) {
-		const __be32 *associativity;
-
-		index = lmb->aa_index * aa.array_sz;
-		associativity = &aa.arrays[index];
-		nid = __associativity_to_nid(associativity, aa.array_sz);
+	if (!lmb) {
+		pr_info("[HOTPLUG TRACE:NUMA] lmb is NULL, returning NUMA_NO_NODE\n");
+		return NUMA_NO_NODE;
 	}
+
+	// Try to get associativity array for this LMB
+	assoc = drmem_get_associativity(lmb);
+	if (!assoc) {
+		pr_info("[HOTPLUG TRACE:NUMA] No associativity found for LMB 0x%x, returning NUMA_NO_NODE\n", lmb->drc_index);
+		return NUMA_NO_NODE;
+	}
+
+	pr_info("[HOTPLUG TRACE:NUMA] Using associativity for LMB 0x%x: ");
+	int count = assoc[0];
+	for (int i = 0; i <= count; i++) {
+		pr_cont("%08x ", assoc[i]);
+	}
+	pr_cont("\n");
+
+	nid = associativity_to_nid(assoc);
+	pr_info("[HOTPLUG TRACE:NUMA] associativity_to_nid returned nid=%d\n", nid);
+
+	pr_info("[HOTPLUG TRACE:NUMA] EXIT: of_drconf_to_nid_single returns %d\n", nid);
 	return nid;
 }
 
