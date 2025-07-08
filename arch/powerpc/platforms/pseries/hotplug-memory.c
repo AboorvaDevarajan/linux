@@ -23,14 +23,17 @@
 
 static void dlpar_free_property(struct property *prop)
 {
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: dlpar_free_property(prop=%p)\n", prop);
 	kfree(prop->name);
 	kfree(prop->value);
 	kfree(prop);
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: dlpar_free_property returns\n");
 }
 
 static struct property *dlpar_clone_property(struct property *prop,
 					     u32 prop_size)
 {
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: dlpar_clone_property(prop=%p, prop_size=%u)\n", prop, prop_size);
 	struct property *new_prop;
 
 	new_prop = kzalloc(sizeof(*new_prop), GFP_KERNEL);
@@ -48,6 +51,7 @@ static struct property *dlpar_clone_property(struct property *prop,
 	new_prop->length = prop_size;
 
 	of_property_set_flag(new_prop, OF_DYNAMIC);
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: dlpar_clone_property returns %p\n", new_prop);
 	return new_prop;
 }
 
@@ -55,6 +59,7 @@ static bool find_aa_index(struct device_node *dr_node,
 			 struct property *ala_prop,
 			 const u32 *lmb_assoc, u32 *aa_index)
 {
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: find_aa_index(dr_node=%p, ala_prop=%p, lmb_assoc=%p, aa_index=%p)\n", dr_node, ala_prop, lmb_assoc, aa_index);
 	__be32 *assoc_arrays;
 	u32 new_prop_size;
 	struct property *new_prop;
@@ -80,13 +85,16 @@ static bool find_aa_index(struct device_node *dr_node,
 			continue;
 
 		*aa_index = i;
+		pr_info("[HOTPLUG TRACE:ASSOC] EXIT: find_aa_index returns true\n");
 		return true;
 	}
 
 	new_prop_size = ala_prop->length + aa_array_sz;
 	new_prop = dlpar_clone_property(ala_prop, new_prop_size);
-	if (!new_prop)
+	if (!new_prop) {
+		pr_info("[HOTPLUG TRACE:ASSOC] EXIT: find_aa_index returns false\n");
 		return false;
+	}
 
 	assoc_arrays = new_prop->value;
 
@@ -105,11 +113,13 @@ static bool find_aa_index(struct device_node *dr_node,
 	 * to the end of the lookup array.
 	 */
 	*aa_index = be32_to_cpu(assoc_arrays[0]) - 1;
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: find_aa_index returns true\n");
 	return true;
 }
 
 static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 {
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: update_lmb_associativity_index(lmb=%p)\n", lmb);
 	struct device_node *parent, *lmb_node, *dr_node;
 	struct property *ala_prop;
 	const u32 *lmb_assoc;
@@ -159,6 +169,7 @@ static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 	}
 
 	lmb->aa_index = aa_index;
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: update_lmb_associativity_index returns %d\n", 0);
 	return 0;
 }
 
@@ -303,36 +314,46 @@ static bool lmb_is_removable(struct drmem_lmb *lmb)
 	return true;
 }
 
-static int dlpar_add_lmb(struct drmem_lmb *);
-
-static int dlpar_remove_lmb(struct drmem_lmb *lmb)
+static int dlpar_add_lmb(struct drmem_lmb *lmb)
 {
-	struct memory_block *mem_block;
-	int rc;
+	unsigned long block_sz;
+	int nid, rc;
 
-	if (!lmb_is_removable(lmb))
+	if (lmb->flags & DRCONF_MEM_ASSIGNED)
 		return -EINVAL;
 
-	mem_block = lmb_to_memblock(lmb);
-	if (mem_block == NULL)
-		return -EINVAL;
-
-	rc = dlpar_offline_lmb(lmb);
+	rc = update_lmb_associativity_index(lmb);
 	if (rc) {
-		put_device(&mem_block->dev);
+		dlpar_release_drc(lmb->drc_index);
+		pr_err("Failed to configure LMB 0x%x\n", lmb->drc_index);
 		return rc;
 	}
 
-	__remove_memory(lmb->base_addr, memory_block_size);
-	put_device(&mem_block->dev);
+	block_sz = memory_block_size_bytes();
 
-	/* Update memory regions for memory remove */
-	memblock_remove(lmb->base_addr, memory_block_size);
+	/* Find the node id for this LMB.  Fake one if necessary. */
+	nid = of_drconf_to_nid_single(lmb);
+	if (nid < 0 || !node_possible(nid))
+		nid = first_online_node;
 
-	invalidate_lmb_associativity_index(lmb);
-	lmb->flags &= ~DRCONF_MEM_ASSIGNED;
+	/* Add the memory */
+	rc = __add_memory(nid, lmb->base_addr, block_sz, MHP_MEMMAP_ON_MEMORY);
+	if (rc) {
+		pr_err("Failed to add LMB 0x%x to node %u", lmb->drc_index, nid);
+		invalidate_lmb_associativity_index(lmb);
+		return rc;
+	}
 
-	return 0;
+	rc = dlpar_online_lmb(lmb);
+	if (rc) {
+		pr_err("Failed to online LMB 0x%x on node %u\n", lmb->drc_index, nid);
+		__remove_memory(lmb->base_addr, block_sz);
+		invalidate_lmb_associativity_index(lmb);
+	} else {
+		lmb->flags |= DRCONF_MEM_ASSIGNED;
+	}
+
+	return rc;
 }
 
 static int dlpar_memory_remove_by_count(u32 lmbs_to_remove)
@@ -342,7 +363,7 @@ static int dlpar_memory_remove_by_count(u32 lmbs_to_remove)
 	int lmbs_available = 0;
 	int rc;
 
-	pr_info("Attempting to hot-remove %d LMB(s)\n", lmbs_to_remove);
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory_remove_by_count(lmbs_to_remove=%d)\n", lmbs_to_remove);
 
 	if (lmbs_to_remove == 0)
 		return -EINVAL;
@@ -415,6 +436,7 @@ static int dlpar_memory_remove_by_count(u32 lmbs_to_remove)
 		rc = 0;
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_remove_by_count returns %d\n", rc);
 	return rc;
 }
 
@@ -424,7 +446,7 @@ static int dlpar_memory_remove_by_index(u32 drc_index)
 	int lmb_found;
 	int rc;
 
-	pr_debug("Attempting to hot-remove LMB, drc index %x\n", drc_index);
+	pr_debug("[HOTPLUG TRACE] ENTRY: dlpar_memory_remove_by_index(drc_index=%x)\n", drc_index);
 
 	lmb_found = 0;
 	for_each_drmem_lmb(lmb) {
@@ -448,6 +470,7 @@ static int dlpar_memory_remove_by_index(u32 drc_index)
 		pr_debug("Memory at %llx was hot-removed\n", lmb->base_addr);
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_remove_by_index returns %d\n", rc);
 	return rc;
 }
 
@@ -456,7 +479,7 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index)
 	struct drmem_lmb *lmb, *start_lmb, *end_lmb;
 	int rc;
 
-	pr_info("Attempting to hot-remove %u LMB(s) at %x\n",
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory_remove_by_ic(lmbs_to_remove=%u, drc_index=%x)\n",
 		lmbs_to_remove, drc_index);
 
 	if (lmbs_to_remove == 0)
@@ -535,6 +558,7 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index)
 		}
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_remove_by_ic returns %d\n", rc);
 	return rc;
 }
 
@@ -567,48 +591,6 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index)
 }
 #endif /* CONFIG_MEMORY_HOTREMOVE */
 
-static int dlpar_add_lmb(struct drmem_lmb *lmb)
-{
-	unsigned long block_sz;
-	int nid, rc;
-
-	if (lmb->flags & DRCONF_MEM_ASSIGNED)
-		return -EINVAL;
-
-	rc = update_lmb_associativity_index(lmb);
-	if (rc) {
-		dlpar_release_drc(lmb->drc_index);
-		pr_err("Failed to configure LMB 0x%x\n", lmb->drc_index);
-		return rc;
-	}
-
-	block_sz = memory_block_size_bytes();
-
-	/* Find the node id for this LMB.  Fake one if necessary. */
-	nid = of_drconf_to_nid_single(lmb);
-	if (nid < 0 || !node_possible(nid))
-		nid = first_online_node;
-
-	/* Add the memory */
-	rc = __add_memory(nid, lmb->base_addr, block_sz, MHP_MEMMAP_ON_MEMORY);
-	if (rc) {
-		pr_err("Failed to add LMB 0x%x to node %u", lmb->drc_index, nid);
-		invalidate_lmb_associativity_index(lmb);
-		return rc;
-	}
-
-	rc = dlpar_online_lmb(lmb);
-	if (rc) {
-		pr_err("Failed to online LMB 0x%x on node %u\n", lmb->drc_index, nid);
-		__remove_memory(lmb->base_addr, block_sz);
-		invalidate_lmb_associativity_index(lmb);
-	} else {
-		lmb->flags |= DRCONF_MEM_ASSIGNED;
-	}
-
-	return rc;
-}
-
 static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 {
 	struct drmem_lmb *lmb;
@@ -616,7 +598,7 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 	int lmbs_reserved = 0;
 	int rc;
 
-	pr_info("Attempting to hot-add %d LMB(s)\n", lmbs_to_add);
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory_add_by_count(lmbs_to_add=%d)\n", lmbs_to_add);
 
 	if (lmbs_to_add == 0)
 		return -EINVAL;
@@ -696,6 +678,7 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 		rc = 0;
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_add_by_count returns %d\n", rc);
 	return rc;
 }
 
@@ -704,7 +687,7 @@ static int dlpar_memory_add_by_index(u32 drc_index)
 	struct drmem_lmb *lmb;
 	int rc, lmb_found;
 
-	pr_info("Attempting to hot-add LMB, drc index %x\n", drc_index);
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory_add_by_index(drc_index=%x)\n", drc_index);
 
 	lmb_found = 0;
 	for_each_drmem_lmb(lmb) {
@@ -730,6 +713,7 @@ static int dlpar_memory_add_by_index(u32 drc_index)
 		pr_info("Memory at %llx (drc index %x) was hot-added\n",
 			lmb->base_addr, drc_index);
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_add_by_index returns %d\n", rc);
 	return rc;
 }
 
@@ -738,7 +722,7 @@ static int dlpar_memory_add_by_ic(u32 lmbs_to_add, u32 drc_index)
 	struct drmem_lmb *lmb, *start_lmb, *end_lmb;
 	int rc;
 
-	pr_info("Attempting to hot-add %u LMB(s) at index %x\n",
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory_add_by_ic(lmbs_to_add=%u, drc_index=%x)\n",
 		lmbs_to_add, drc_index);
 
 	if (lmbs_to_add == 0)
@@ -803,11 +787,13 @@ static int dlpar_memory_add_by_ic(u32 lmbs_to_add, u32 drc_index)
 		}
 	}
 
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory_add_by_ic returns %d\n", rc);
 	return rc;
 }
 
 int dlpar_memory(struct pseries_hp_errorlog *hp_elog)
 {
+	pr_info("[HOTPLUG TRACE] ENTRY: dlpar_memory(action=%d, id_type=%d)\n", hp_elog->action, hp_elog->id_type);
 	u32 count, drc_index;
 	int rc;
 
@@ -866,6 +852,7 @@ int dlpar_memory(struct pseries_hp_errorlog *hp_elog)
 		rc = drmem_update_dt();
 
 	unlock_device_hotplug();
+	pr_info("[HOTPLUG TRACE] EXIT: dlpar_memory returns %d\n", rc);
 	return rc;
 }
 
