@@ -364,7 +364,7 @@ void initialize_form1_numa_distance(const __be32 *associativity)
 /*
  * Used to update distance information w.r.t newly added node.
  */
-void update_numa_distance(struct device_node *node)
+static void update_numa_distance(struct device_node *node)
 {
 	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: update_numa_distance(node=%p)\n", node);
 	int nid;
@@ -620,68 +620,89 @@ static int of_get_assoc_arrays(struct assoc_arrays *aa)
 
 static int __init get_nid_and_numa_distance(struct drmem_lmb *lmb)
 {
+	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: get_nid_and_numa_distance(lmb=%p, drc_index=0x%x, aa_index=%u)\n", lmb, lmb ? lmb->drc_index : 0, lmb ? lmb->aa_index : 0);
 	struct assoc_arrays aa = { .arrays = NULL };
 	int default_nid = NUMA_NO_NODE;
 	int nid = default_nid;
 	int rc, index;
 
-	if ((primary_domain_index < 0) || !numa_enabled)
+	pr_info("[HOTPLUG TRACE:NUMA] primary_domain_index=%d, numa_enabled=%d\n", primary_domain_index, numa_enabled);
+	if ((primary_domain_index < 0) || !numa_enabled) {
+		pr_info("[HOTPLUG TRACE:NUMA] Invalid primary_domain_index or NUMA not enabled, returning %d\n", default_nid);
 		return default_nid;
+	}
 
 	rc = of_get_assoc_arrays(&aa);
-	if (rc)
+	pr_info("[HOTPLUG TRACE:NUMA] of_get_assoc_arrays rc=%d, array_sz=%d, n_arrays=%d\n", rc, aa.array_sz, aa.n_arrays);
+	if (rc) {
+		pr_info("[HOTPLUG TRACE:NUMA] Failed to get assoc arrays, returning %d\n", default_nid);
 		return default_nid;
+	}
 
+	pr_info("[HOTPLUG TRACE:NUMA] lmb->flags=0x%x, lmb->aa_index=%u\n", lmb->flags, lmb->aa_index);
 	if (primary_domain_index <= aa.array_sz &&
 	    !(lmb->flags & DRCONF_MEM_AI_INVALID) && lmb->aa_index < aa.n_arrays) {
 		const __be32 *associativity;
-
 		index = lmb->aa_index * aa.array_sz;
 		associativity = &aa.arrays[index];
-		nid = __associativity_to_nid(associativity, aa.array_sz);
-		if (nid > 0 && affinity_form == FORM1_AFFINITY) {
-			/*
-			 * lookup array associativity entries have
-			 * no length of the array as the first element.
-			 */
-			__initialize_form1_numa_distance(associativity, aa.array_sz);
+		pr_info("[HOTPLUG TRACE:NUMA] Using associativity array at index=%d for nid calculation\n", index);
+		pr_info("[HOTPLUG TRACE:NUMA] associativity values: ");
+		for (int i = 0; i < aa.array_sz; i++) {
+			pr_cont("%08x ", be32_to_cpu(associativity[i]));
 		}
+		pr_cont("\n");
+		nid = __associativity_to_nid(associativity, aa.array_sz);
+		pr_info("[HOTPLUG TRACE:NUMA] __associativity_to_nid returned nid=%d\n", nid);
+		if (nid > 0 && affinity_form == FORM1_AFFINITY) {
+			pr_info("[HOTPLUG TRACE:NUMA] Calling __initialize_form1_numa_distance for nid=%d\n", nid);
+			__initialize_form1_numa_distance(associativity, aa.array_sz);
+			pr_info("[HOTPLUG TRACE:NUMA] Returned from __initialize_form1_numa_distance\n");
+		}
+	} else {
+		pr_info("[HOTPLUG TRACE:NUMA] Did not meet conditions for associativity to nid mapping\n");
 	}
+	pr_info("[HOTPLUG TRACE:NUMA] EXIT: get_nid_and_numa_distance returns %d\n", nid);
 	return nid;
 }
 
-/*
- * This is like of_node_to_nid_single() for memory represented in the
- * ibm,dynamic-reconfiguration-memory node.
- */
 int of_drconf_to_nid_single(struct drmem_lmb *lmb)
 {
 	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: of_drconf_to_nid_single(lmb=%p, drc_index=0x%x, aa_index=%u)\n", lmb, lmb ? lmb->drc_index : 0, lmb ? lmb->aa_index : 0);
-	int nid = NUMA_NO_NODE;
-	const u32 *assoc = NULL;
+	struct assoc_arrays aa = { .arrays = NULL };
+	int default_nid = NUMA_NO_NODE;
+	int nid = default_nid;
+	int rc, index;
 
-	if (!lmb) {
-		pr_info("[HOTPLUG TRACE:NUMA] lmb is NULL, returning NUMA_NO_NODE\n");
-		return NUMA_NO_NODE;
+	pr_info("[HOTPLUG TRACE:NUMA] primary_domain_index=%d, numa_enabled=%d\n", primary_domain_index, numa_enabled);
+	if ((primary_domain_index < 0) || !numa_enabled) {
+		pr_info("[HOTPLUG TRACE:NUMA] Invalid primary_domain_index or NUMA not enabled, returning %d\n", default_nid);
+		return default_nid;
 	}
 
-	// Try to get associativity array for this LMB
-	assoc = drmem_get_associativity(lmb);
-	if (!assoc) {
-		pr_info("[HOTPLUG TRACE:NUMA] No associativity found for LMB 0x%x, returning NUMA_NO_NODE\n", lmb->drc_index);
-		return NUMA_NO_NODE;
+	rc = of_get_assoc_arrays(&aa);
+	pr_info("[HOTPLUG TRACE:NUMA] of_get_assoc_arrays rc=%d, array_sz=%d, n_arrays=%d\n", rc, aa.array_sz, aa.n_arrays);
+	if (rc) {
+		pr_info("[HOTPLUG TRACE:NUMA] Failed to get assoc arrays, returning %d\n", default_nid);
+		return default_nid;
 	}
 
-	pr_info("[HOTPLUG TRACE:NUMA] Using associativity for LMB 0x%x: ");
-	int count = assoc[0];
-	for (int i = 0; i <= count; i++) {
-		pr_cont("%08x ", assoc[i]);
+	pr_info("[HOTPLUG TRACE:NUMA] lmb->flags=0x%x, lmb->aa_index=%u\n", lmb->flags, lmb->aa_index);
+	if (primary_domain_index <= aa.array_sz &&
+	    !(lmb->flags & DRCONF_MEM_AI_INVALID) && lmb->aa_index < aa.n_arrays) {
+		const __be32 *associativity;
+		index = lmb->aa_index * aa.array_sz;
+		associativity = &aa.arrays[index];
+		pr_info("[HOTPLUG TRACE:NUMA] Using associativity array at index=%d for nid calculation\n", index);
+		pr_info("[HOTPLUG TRACE:NUMA] associativity values: ");
+		for (int i = 0; i < aa.array_sz; i++) {
+			pr_cont("%08x ", be32_to_cpu(associativity[i]));
+		}
+		pr_cont("\n");
+		nid = __associativity_to_nid(associativity, aa.array_sz);
+		pr_info("[HOTPLUG TRACE:NUMA] __associativity_to_nid returned nid=%d\n", nid);
+	} else {
+		pr_info("[HOTPLUG TRACE:NUMA] Did not meet conditions for associativity to nid mapping\n");
 	}
-	pr_cont("\n");
-
-	nid = associativity_to_nid(assoc);
-	pr_info("[HOTPLUG TRACE:NUMA] associativity_to_nid returned nid=%d\n", nid);
-
 	pr_info("[HOTPLUG TRACE:NUMA] EXIT: of_drconf_to_nid_single returns %d\n", nid);
 	return nid;
 }
