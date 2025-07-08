@@ -591,6 +591,48 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index)
 }
 #endif /* CONFIG_MEMORY_HOTREMOVE */
 
+static int dlpar_add_lmb(struct drmem_lmb *lmb)
+{
+	unsigned long block_sz;
+	int nid, rc;
+
+	if (lmb->flags & DRCONF_MEM_ASSIGNED)
+		return -EINVAL;
+
+	rc = update_lmb_associativity_index(lmb);
+	if (rc) {
+		dlpar_release_drc(lmb->drc_index);
+		pr_err("Failed to configure LMB 0x%x\n", lmb->drc_index);
+		return rc;
+	}
+
+	block_sz = memory_block_size_bytes();
+
+	/* Find the node id for this LMB.  Fake one if necessary. */
+	nid = of_drconf_to_nid_single(lmb);
+	if (nid < 0 || !node_possible(nid))
+		nid = first_online_node;
+
+	/* Add the memory */
+	rc = __add_memory(nid, lmb->base_addr, block_sz, MHP_MEMMAP_ON_MEMORY);
+	if (rc) {
+		pr_err("Failed to add LMB 0x%x to node %u", lmb->drc_index, nid);
+		invalidate_lmb_associativity_index(lmb);
+		return rc;
+	}
+
+	rc = dlpar_online_lmb(lmb);
+	if (rc) {
+		pr_err("Failed to online LMB 0x%x on node %u\n", lmb->drc_index, nid);
+		__remove_memory(lmb->base_addr, block_sz);
+		invalidate_lmb_associativity_index(lmb);
+	} else {
+		lmb->flags |= DRCONF_MEM_ASSIGNED;
+	}
+
+	return rc;
+}
+
 static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 {
 	struct drmem_lmb *lmb;
