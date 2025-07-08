@@ -109,11 +109,11 @@ static __cpuidle void check_and_cede_processor(void)
  * parameter it must provide the following information in the NULL terminated
  * parameter string:
  *
- * a. The first byte is the length “N” of each cede latency setting record minus
+ * a. The first byte is the length "N" of each cede latency setting record minus
  *    one (zero indicates a length of 1 byte).
  *
  * b. For each supported cede latency setting a cede latency setting record
- *    consisting of the first “N” bytes as per the following table.
+ *    consisting of the first "N" bytes as per the following table.
  *
  *    -----------------------------
  *    | Field           | Field   |
@@ -166,6 +166,7 @@ static struct xcede_latency_parameter xcede_latency_parameter __initdata;
 
 static int __init parse_cede_parameters(void)
 {
+	pr_info("[CEDE TRACE] ENTRY: parse_cede_parameters\n");
 	struct xcede_latency_payload *payload;
 	u32 total_xcede_records_size;
 	u8 xcede_record_size;
@@ -175,23 +176,27 @@ static int __init parse_cede_parameters(void)
 	ret = rtas_call(rtas_token("ibm,get-system-parameter"), 3, 1,
 			NULL, CEDE_LATENCY_TOKEN, __pa(&xcede_latency_parameter),
 			sizeof(xcede_latency_parameter));
+	pr_info("[CEDE TRACE] rtas_call returned %d\n", ret);
 	if (ret) {
-		pr_err("xcede: Error parsing CEDE_LATENCY_TOKEN\n");
+		pr_err("[CEDE TRACE] Error parsing CEDE_LATENCY_TOKEN\n");
+		pr_info("[CEDE TRACE] EXIT: parse_cede_parameters returns %d\n", ret);
 		return ret;
 	}
 
 	payload_size = be16_to_cpu(xcede_latency_parameter.payload_size);
+	pr_info("[CEDE TRACE] payload_size = %u\n", payload_size);
 	payload = &xcede_latency_parameter.payload;
 
 	xcede_record_size = payload->record_size + 1;
+	pr_info("[CEDE TRACE] xcede_record_size = %u\n", xcede_record_size);
+	pr_info("[CEDE TRACE] expected record size = %lu\n", sizeof(struct xcede_latency_record));
 
 	if (xcede_record_size != sizeof(struct xcede_latency_record)) {
-		pr_err("xcede: Expected record-size %lu. Observed size %u.\n",
+		pr_err("[CEDE TRACE] Expected record-size %lu. Observed size %u.\n",
 		       sizeof(struct xcede_latency_record), xcede_record_size);
+		pr_info("[CEDE TRACE] EXIT: parse_cede_parameters returns -EINVAL\n");
 		return -EINVAL;
 	}
-
-	pr_info("xcede: xcede_record_size = %d\n", xcede_record_size);
 
 	/*
 	 * Since the payload_size includes the last NULL byte and the
@@ -199,7 +204,9 @@ static int __init parse_cede_parameters(void)
 	 * cede_latency settings.
 	 */
 	total_xcede_records_size = payload_size - 2;
+	pr_info("[CEDE TRACE] total_xcede_records_size = %u\n", total_xcede_records_size);
 	nr_xcede_records = total_xcede_records_size / xcede_record_size;
+	pr_info("[CEDE TRACE] nr_xcede_records = %u\n", nr_xcede_records);
 
 	for (i = 0; i < nr_xcede_records; i++) {
 		struct xcede_latency_record *record = &payload->records[i];
@@ -207,10 +214,11 @@ static int __init parse_cede_parameters(void)
 		u8 wake_on_irqs = record->wake_on_irqs;
 		u8 hint = record->hint;
 
-		pr_info("xcede: Record %d : hint = %u, latency = 0x%llx tb ticks, Wake-on-irq = %u\n",
+		pr_info("[CEDE TRACE] Record %d : hint = %u, latency = 0x%llx tb ticks, Wake-on-irq = %u\n",
 			i, hint, latency_ticks, wake_on_irqs);
 	}
 
+	pr_info("[CEDE TRACE] EXIT: parse_cede_parameters returns 0\n");
 	return 0;
 }
 
@@ -350,58 +358,47 @@ static int pseries_cpuidle_driver_init(void)
 
 static void __init fixup_cede0_latency(void)
 {
+	pr_info("[CEDE TRACE] ENTRY: fixup_cede0_latency\n");
 	struct xcede_latency_payload *payload;
 	u64 min_xcede_latency_us = UINT_MAX;
 	int i;
 
-	if (parse_cede_parameters())
+	int parse_ret = parse_cede_parameters();
+	pr_info("[CEDE TRACE] parse_cede_parameters returned %d\n", parse_ret);
+	if (parse_ret)
 		return;
 
-	pr_info("cpuidle: Skipping the %d Extended CEDE idle states\n",
-		nr_xcede_records);
+	pr_info("[CEDE TRACE] nr_xcede_records = %u\n", nr_xcede_records);
+	pr_info("cpuidle: Skipping the %d Extended CEDE idle states\n", nr_xcede_records);
 
 	payload = &xcede_latency_parameter.payload;
 
-	/*
-	 * The CEDE idle state maps to CEDE(0). While the hypervisor
-	 * does not advertise CEDE(0) exit latency values, it does
-	 * advertise the latency values of the extended CEDE states.
-	 * We use the lowest advertised exit latency value as a proxy
-	 * for the exit latency of CEDE(0).
-	 */
 	for (i = 0; i < nr_xcede_records; i++) {
 		struct xcede_latency_record *record = &payload->records[i];
 		u8 hint = record->hint;
 		u64 latency_tb = be64_to_cpu(record->latency_ticks);
 		u64 latency_us = DIV_ROUND_UP_ULL(tb_to_ns(latency_tb), NSEC_PER_USEC);
 
-		/*
-		 * We expect the exit latency of an extended CEDE
-		 * state to be non-zero, it to since it takes at least
-		 * a few nanoseconds to wakeup the idle CPU and
-		 * dispatch the virtual processor into the Linux
-		 * Guest.
-		 *
-		 * So we consider only non-zero value for performing
-		 * the fixup of CEDE(0) latency.
-		 */
+		pr_info("[CEDE TRACE] Record %d: hint=%d, latency_tb=0x%llx, latency_us=%llu\n", i, hint, latency_tb, latency_us);
+
 		if (latency_us == 0) {
-			pr_warn("cpuidle: Skipping xcede record %d [hint=%d]. Exit latency = 0us\n",
-				i, hint);
+			pr_warn("[CEDE TRACE] Skipping xcede record %d [hint=%d]. Exit latency = 0us\n", i, hint);
 			continue;
 		}
 
-		if (latency_us < min_xcede_latency_us)
+		if (latency_us < min_xcede_latency_us) {
+			pr_info("[CEDE TRACE] New min_xcede_latency_us: %llu (was %llu)\n", latency_us, min_xcede_latency_us);
 			min_xcede_latency_us = latency_us;
+		}
 	}
 
 	if (min_xcede_latency_us != UINT_MAX) {
 		dedicated_states[1].exit_latency = min_xcede_latency_us;
 		dedicated_states[1].target_residency = 10 * (min_xcede_latency_us);
-		pr_info("cpuidle: Fixed up CEDE exit latency to %llu us\n",
-			min_xcede_latency_us);
+		pr_info("[CEDE TRACE] Fixed up CEDE exit latency to %llu us, target_residency to %u us\n",
+			min_xcede_latency_us, dedicated_states[1].target_residency);
 	}
-
+	pr_info("[CEDE TRACE] EXIT: fixup_cede0_latency\n");
 }
 
 /*
