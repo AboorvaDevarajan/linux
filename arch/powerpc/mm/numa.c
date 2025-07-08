@@ -339,32 +339,42 @@ static void initialize_form1_numa_distance(const __be32 *associativity)
  */
 void update_numa_distance(struct device_node *node)
 {
+	pr_info("[HOTPLUG TRACE:NUMA] ENTRY: update_numa_distance(node=%p)\n", node);
 	int nid;
 
-	if (affinity_form == FORM0_AFFINITY)
+	pr_info("[HOTPLUG TRACE:NUMA] affinity_form=%d\n", affinity_form);
+	if (affinity_form == FORM0_AFFINITY) {
+		pr_info("[HOTPLUG TRACE:NUMA] FORM0_AFFINITY: nothing to do, exiting\n");
 		return;
-	else if (affinity_form == FORM1_AFFINITY) {
+	} else if (affinity_form == FORM1_AFFINITY) {
 		const __be32 *associativity;
 
+		pr_info("[HOTPLUG TRACE:NUMA] FORM1_AFFINITY: getting associativity\n");
 		associativity = of_get_associativity(node);
-		if (!associativity)
+		if (!associativity) {
+			pr_info("[HOTPLUG TRACE:NUMA] FORM1_AFFINITY: no associativity found, exiting\n");
 			return;
+		}
 
+		pr_info("[HOTPLUG TRACE:NUMA] FORM1_AFFINITY: calling initialize_form1_numa_distance\n");
 		initialize_form1_numa_distance(associativity);
+		pr_info("[HOTPLUG TRACE:NUMA] FORM1_AFFINITY: done, exiting\n");
 		return;
 	}
 
 	/* FORM2 affinity  */
+	pr_info("[HOTPLUG TRACE:NUMA] FORM2_AFFINITY: calling of_node_to_nid_single\n");
 	nid = of_node_to_nid_single(node);
-	if (nid == NUMA_NO_NODE)
+	pr_info("[HOTPLUG TRACE:NUMA] FORM2_AFFINITY: got nid=%d\n", nid);
+	if (nid == NUMA_NO_NODE) {
+		pr_info("[HOTPLUG TRACE:NUMA] FORM2_AFFINITY: NUMA_NO_NODE, exiting\n");
 		return;
+	}
 
-	/*
-	 * With FORM2 we expect NUMA distance of all possible NUMA
-	 * nodes to be provided during boot.
-	 */
+	pr_info("[HOTPLUG TRACE:NUMA] FORM2_AFFINITY: checking numa_distance_table[%d][%d]=%d\n", nid, nid, numa_distance_table[nid][nid]);
 	WARN(numa_distance_table[nid][nid] == -1,
 	     "NUMA distance details for node %d not provided\n", nid);
+	pr_info("[HOTPLUG TRACE:NUMA] EXIT: update_numa_distance\n");
 }
 EXPORT_SYMBOL_GPL(update_numa_distance);
 

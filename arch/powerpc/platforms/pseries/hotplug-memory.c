@@ -59,115 +59,135 @@ static bool find_aa_index(struct device_node *dr_node,
 			 struct property *ala_prop,
 			 const u32 *lmb_assoc, u32 *aa_index)
 {
-	pr_info("[HOTPLUG TRACE] ENTRY: find_aa_index(dr_node=%p, ala_prop=%p, lmb_assoc=%p, aa_index=%p)\n", dr_node, ala_prop, lmb_assoc, aa_index);
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: find_aa_index(dr_node=%p, ala_prop=%p, lmb_assoc=%p, aa_index=%p)\n", dr_node, ala_prop, lmb_assoc, aa_index);
 	__be32 *assoc_arrays;
 	u32 new_prop_size;
 	struct property *new_prop;
 	int aa_arrays, aa_array_entries, aa_array_sz;
 	int i, index;
 
-	/*
-	 * The ibm,associativity-lookup-arrays property is defined to be
-	 * a 32-bit value specifying the number of associativity arrays
-	 * followed by a 32-bitvalue specifying the number of entries per
-	 * array, followed by the associativity arrays.
-	 */
 	assoc_arrays = ala_prop->value;
-
+	
 	aa_arrays = be32_to_cpu(assoc_arrays[0]);
 	aa_array_entries = be32_to_cpu(assoc_arrays[1]);
 	aa_array_sz = aa_array_entries * sizeof(u32);
+	pr_info("[HOTPLUG TRACE:ASSOC] aa_arrays=%d, aa_array_entries=%d, aa_array_sz=%d\n", aa_arrays, aa_array_entries, aa_array_sz);
 
 	for (i = 0; i < aa_arrays; i++) {
 		index = (i * aa_array_entries) + 2;
-
-		if (memcmp(&assoc_arrays[index], &lmb_assoc[1], aa_array_sz))
-			continue;
-
-		*aa_index = i;
-		pr_info("[HOTPLUG TRACE] EXIT: find_aa_index returns true\n");
-		return true;
+		pr_info("[HOTPLUG TRACE:ASSOC] Iteration %d: comparing with associativity array at index %d\n", i, index);
+		pr_info("[HOTPLUG TRACE:ASSOC] Comparing: ");
+		for (int j = 0; j < aa_array_entries; j++) {
+			pr_cont("%08x ", be32_to_cpu(assoc_arrays[index + j]));
+		}
+		pr_cont("vs ");
+		for (int j = 0; j < aa_array_entries; j++) {
+			pr_cont("%08x ", lmb_assoc[1 + j]);
+		}
+		pr_cont("\n");
+		if (memcmp(&assoc_arrays[index], &lmb_assoc[1], aa_array_sz) == 0) {
+			*aa_index = i;
+			pr_info("[HOTPLUG TRACE:ASSOC] Match found at index %d, aa_index set to %u\n", i, *aa_index);
+			pr_info("[HOTPLUG TRACE:ASSOC] EXIT: find_aa_index returns true\n");
+			return true;
+		} else {
+			pr_info("[HOTPLUG TRACE:ASSOC] No match at index %d\n", i);
+		}
 	}
 
+	pr_info("[HOTPLUG TRACE:ASSOC] No match found, adding new associativity array\n");
 	new_prop_size = ala_prop->length + aa_array_sz;
 	new_prop = dlpar_clone_property(ala_prop, new_prop_size);
-	if (!new_prop)
+	if (!new_prop) {
+		pr_info("[HOTPLUG TRACE:ASSOC] Failed to clone property, EXIT: find_aa_index returns false\n");
 		return false;
+	}
 
 	assoc_arrays = new_prop->value;
-
-	/* increment the number of entries in the lookup array */
 	assoc_arrays[0] = cpu_to_be32(aa_arrays + 1);
-
-	/* copy the new associativity into the lookup array */
 	index = aa_arrays * aa_array_entries + 2;
 	memcpy(&assoc_arrays[index], &lmb_assoc[1], aa_array_sz);
+	pr_info("[HOTPLUG TRACE:ASSOC] Added new associativity array at index %d: ", aa_arrays);
+	for (int j = 0; j < aa_array_entries; j++) {
+		pr_cont("%08x ", lmb_assoc[1 + j]);
+	}
+	pr_cont("\n");
 
 	of_update_property(dr_node, new_prop);
+	pr_info("[HOTPLUG TRACE:ASSOC] Updated property in device tree\n");
 
-	/*
-	 * The associativity lookup array index for this lmb is
-	 * number of entries - 1 since we added its associativity
-	 * to the end of the lookup array.
-	 */
 	*aa_index = be32_to_cpu(assoc_arrays[0]) - 1;
-	pr_info("[HOTPLUG TRACE] EXIT: find_aa_index returns false\n");
+	pr_info("[HOTPLUG TRACE:ASSOC] Set aa_index to %u\n", *aa_index);
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: find_aa_index returns true\n");
 	return true;
 }
 
 static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 {
-	pr_info("[HOTPLUG TRACE] ENTRY: update_lmb_associativity_index(lmb=%p)\n", lmb);
+	pr_info("[HOTPLUG TRACE:ASSOC] ENTRY: update_lmb_associativity_index(lmb=%p)\n", lmb);
 	struct device_node *parent, *lmb_node, *dr_node;
 	struct property *ala_prop;
 	const u32 *lmb_assoc;
 	u32 aa_index;
 	bool found;
 
+	pr_info("[HOTPLUG TRACE:ASSOC] Looking for device tree root node\n");
 	parent = of_find_node_by_path("/");
-	if (!parent)
+	if (!parent) {
+		pr_info("[HOTPLUG TRACE:ASSOC] Failed to find root node, returning -ENODEV\n");
 		return -ENODEV;
+	}
 
-	lmb_node = dlpar_configure_connector(cpu_to_be32(lmb->drc_index),
-					     parent);
+	pr_info("[HOTPLUG TRACE:ASSOC] Configuring connector for LMB drc_index=0x%x\n", lmb->drc_index);
+	lmb_node = dlpar_configure_connector(cpu_to_be32(lmb->drc_index), parent);
 	of_node_put(parent);
-	if (!lmb_node)
+	if (!lmb_node) {
+		pr_info("[HOTPLUG TRACE:ASSOC] Failed to configure connector, returning -EINVAL\n");
 		return -EINVAL;
+	}
 
+	pr_info("[HOTPLUG TRACE:ASSOC] Getting ibm,associativity property\n");
 	lmb_assoc = of_get_property(lmb_node, "ibm,associativity", NULL);
 	if (!lmb_assoc) {
 		dlpar_free_cc_nodes(lmb_node);
+		pr_info("[HOTPLUG TRACE:ASSOC] No ibm,associativity property, returning -ENODEV\n");
 		return -ENODEV;
 	}
 
+	pr_info("[HOTPLUG TRACE:ASSOC] Calling update_numa_distance\n");
 	update_numa_distance(lmb_node);
 
+	pr_info("[HOTPLUG TRACE:ASSOC] Looking for /ibm,dynamic-reconfiguration-memory node\n");
 	dr_node = of_find_node_by_path("/ibm,dynamic-reconfiguration-memory");
 	if (!dr_node) {
 		dlpar_free_cc_nodes(lmb_node);
+		pr_info("[HOTPLUG TRACE:ASSOC] Failed to find DR node, returning -ENODEV\n");
 		return -ENODEV;
 	}
 
-	ala_prop = of_find_property(dr_node, "ibm,associativity-lookup-arrays",
-				    NULL);
+	pr_info("[HOTPLUG TRACE:ASSOC] Looking for ibm,associativity-lookup-arrays property\n");
+	ala_prop = of_find_property(dr_node, "ibm,associativity-lookup-arrays", NULL);
 	if (!ala_prop) {
 		of_node_put(dr_node);
 		dlpar_free_cc_nodes(lmb_node);
+		pr_info("[HOTPLUG TRACE:ASSOC] No lookup arrays property, returning -ENODEV\n");
 		return -ENODEV;
 	}
 
+	pr_info("[HOTPLUG TRACE:ASSOC] Calling find_aa_index\n");
 	found = find_aa_index(dr_node, ala_prop, lmb_assoc, &aa_index);
 
 	of_node_put(dr_node);
 	dlpar_free_cc_nodes(lmb_node);
 
 	if (!found) {
-		pr_err("Could not find LMB associativity\n");
+		pr_err("[HOTPLUG TRACE:ASSOC] Could not find LMB associativity\n");
 		return -1;
 	}
 
 	lmb->aa_index = aa_index;
-	pr_info("[HOTPLUG TRACE] EXIT: update_lmb_associativity_index returns %d\n", 0);
+	pr_info("[HOTPLUG TRACE:ASSOC] Set lmb->aa_index = %u\n", aa_index);
+	pr_info("[HOTPLUG TRACE:ASSOC] EXIT: update_lmb_associativity_index returns 0\n");
 	return 0;
 }
 
