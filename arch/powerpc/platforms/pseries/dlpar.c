@@ -577,10 +577,15 @@ static void pseries_hp_work_fn(struct work_struct *work)
 	struct pseries_hp_work *hp_work =
 			container_of(work, struct pseries_hp_work, work);
 
-	handle_dlpar_errorlog(hp_work->errlog);
+	pr_info("[DLPAR TRACE] ENTRY: pseries_hp_work_fn work=%p hp_work=%p errlog=%p\n", work, hp_work, hp_work ? hp_work->errlog : NULL);
+
+	int rc = handle_dlpar_errorlog(hp_work->errlog);
+	pr_info("[DLPAR TRACE] handle_dlpar_errorlog returned rc=%d\n", rc);
 
 	kfree(hp_work->errlog);
 	kfree(work);
+
+	pr_info("[DLPAR TRACE] EXIT: pseries_hp_work_fn\n");
 }
 
 void queue_hotplug_event(struct pseries_hp_errorlog *hp_errlog)
@@ -723,6 +728,8 @@ static ssize_t dlpar_store(const struct class *class, const struct class_attribu
 	char *args;
 	int rc;
 
+	pr_info("[DLPAR TRACE] ENTRY: dlpar_store buf='%.*s' count=%zu\n", (int)count, buf, count);
+
 	args = argbuf = kstrdup(buf, GFP_KERNEL);
 	if (!argbuf)
 		return -ENOMEM;
@@ -731,33 +738,50 @@ static ssize_t dlpar_store(const struct class *class, const struct class_attribu
 	 * Parse out the request from the user, this will be in the form:
 	 * <resource> <action> <id_type> <id>
 	 */
+	pr_info("[DLPAR TRACE] Parsing resource\n");
 	rc = dlpar_parse_resource(&args, &hp_elog);
-	if (rc)
+	if (rc) {
+		pr_err("[DLPAR TRACE] Failed to parse resource from '%s'\n", buf);
 		goto dlpar_store_out;
+	}
 
+	pr_info("[DLPAR TRACE] Parsing action\n");
 	rc = dlpar_parse_action(&args, &hp_elog);
-	if (rc)
+	if (rc) {
+		pr_err("[DLPAR TRACE] Failed to parse action from '%s'\n", buf);
 		goto dlpar_store_out;
+	}
 
+	pr_info("[DLPAR TRACE] Parsing id_type\n");
 	rc = dlpar_parse_id_type(&args, &hp_elog);
-	if (rc)
+	if (rc) {
+		pr_err("[DLPAR TRACE] Failed to parse id_type from '%s'\n", buf);
 		goto dlpar_store_out;
+	}
 
+	pr_info("[DLPAR TRACE] Calling handle_dlpar_errorlog\n");
 	rc = handle_dlpar_errorlog(&hp_elog);
 
-dlpar_store_out:
+ dlpar_store_out:
 	kfree(argbuf);
 
 	if (rc)
-		pr_err("Could not handle DLPAR request \"%s\"\n", buf);
+		pr_err("[DLPAR TRACE] Could not handle DLPAR request '%s', rc=%d\n", buf, rc);
+	else
+		pr_info("[DLPAR TRACE] DLPAR request handled successfully\n");
 
+	pr_info("[DLPAR TRACE] EXIT: dlpar_store rc=%d\n", rc);
 	return rc ? rc : count;
 }
 
 static ssize_t dlpar_show(const struct class *class, const struct class_attribute *attr,
 			  char *buf)
 {
-	return sprintf(buf, "%s\n", "memory,cpu,dt");
+	pr_info("[DLPAR TRACE] ENTRY: dlpar_show\n");
+	ssize_t ret = sprintf(buf, "%s\n", "memory,cpu,dt");
+	pr_info("[DLPAR TRACE] dlpar_show output: '%s'\n", buf);
+	pr_info("[DLPAR TRACE] EXIT: dlpar_show ret=%zd\n", ret);
+	return ret;
 }
 
 static CLASS_ATTR_RW(dlpar);

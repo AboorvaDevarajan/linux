@@ -670,13 +670,14 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 	int lmbs_reserved = 0;
 	int rc;
 
-	pr_info("Attempting to hot-add %d LMB(s)\n", lmbs_to_add);
+	pr_info("[DLPAR TRACE] ENTRY: dlpar_memory_add_by_count lmbs_to_add=%u\n", lmbs_to_add);
 
 	if (lmbs_to_add == 0)
 		return -EINVAL;
 
 	/* Validate that there are enough LMBs to satisfy the request */
 	for_each_drmem_lmb(lmb) {
+		pr_info("[DLPAR TRACE] Considering LMB drc_index=0x%x flags=0x%x\n", lmb->drc_index, lmb->flags);
 		if (lmb->flags & DRCONF_MEM_RESERVED)
 			continue;
 
@@ -687,26 +688,30 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 			break;
 	}
 
-	if (lmbs_available < lmbs_to_add)
+	if (lmbs_available < lmbs_to_add) {
+		pr_info("[DLPAR TRACE] Not enough LMBs available (%d of %u)\n", lmbs_available, lmbs_to_add);
 		return -EINVAL;
+	}
 
 	for_each_drmem_lmb(lmb) {
 		if (lmb->flags & DRCONF_MEM_ASSIGNED)
 			continue;
 
+		pr_info("[DLPAR TRACE] Attempting to acquire DRC for LMB drc_index=0x%x\n", lmb->drc_index);
 		rc = dlpar_acquire_drc(lmb->drc_index);
+		pr_info("[DLPAR TRACE] dlpar_acquire_drc rc=%d\n", rc);
 		if (rc)
 			continue;
 
+		pr_info("[DLPAR TRACE] Calling dlpar_add_lmb for LMB drc_index=0x%x\n", lmb->drc_index);
 		rc = dlpar_add_lmb(lmb);
+		pr_info("[DLPAR TRACE] dlpar_add_lmb rc=%d\n", rc);
 		if (rc) {
 			dlpar_release_drc(lmb->drc_index);
 			continue;
 		}
 
-		/* Mark this lmb so we can remove it later if all of the
-		 * requested LMBs cannot be added.
-		 */
+		pr_info("[DLPAR TRACE] Marking LMB drc_index=0x%x as reserved\n", lmb->drc_index);
 		drmem_mark_lmb_reserved(lmb);
 		lmbs_reserved++;
 		if (lmbs_reserved == lmbs_to_add)
@@ -714,16 +719,16 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 	}
 
 	if (lmbs_reserved != lmbs_to_add) {
-		pr_err("Memory hot-add failed, removing any added LMBs\n");
+		pr_err("[DLPAR TRACE] Memory hot-add failed, removing any added LMBs\n");
 
 		for_each_drmem_lmb(lmb) {
 			if (!drmem_lmb_reserved(lmb))
 				continue;
 
+			pr_info("[DLPAR TRACE] Rolling back LMB drc_index=0x%x\n", lmb->drc_index);
 			rc = dlpar_remove_lmb(lmb);
 			if (rc)
-				pr_err("Failed to remove LMB, drc index %x\n",
-				       lmb->drc_index);
+				pr_err("[DLPAR TRACE] Failed to remove LMB, drc index %x\n", lmb->drc_index);
 			else
 				dlpar_release_drc(lmb->drc_index);
 
@@ -733,20 +738,21 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 			if (lmbs_reserved == 0)
 				break;
 		}
+		pr_info("[DLPAR TRACE] EXIT: dlpar_memory_add_by_count rc=-EINVAL (rollback)\n");
 		rc = -EINVAL;
 	} else {
 		for_each_drmem_lmb(lmb) {
 			if (!drmem_lmb_reserved(lmb))
 				continue;
 
-			pr_debug("Memory at %llx (drc index %x) was hot-added\n",
-				 lmb->base_addr, lmb->drc_index);
+			pr_info("[DLPAR TRACE] Memory at %llx (drc index %x) was hot-added\n", lmb->base_addr, lmb->drc_index);
 			drmem_remove_lmb_reservation(lmb);
 			lmbs_reserved--;
 
 			if (lmbs_reserved == 0)
 				break;
 		}
+		pr_info("[DLPAR TRACE] EXIT: dlpar_memory_add_by_count rc=0 (success)\n");
 		rc = 0;
 	}
 
