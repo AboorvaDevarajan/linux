@@ -1190,6 +1190,7 @@ static void __init find_possible_nodes(void)
 	 * so we should consider the max number in that case.
 	 */
 	root = of_find_node_by_path("/");
+	pr_info("[NUMA TRACE] root node=%p\n", root);
 	if (!of_get_property(root, "ibm,migratable-partition", NULL))
 		domains = of_get_property(rtas,
 					  "ibm,current-associativity-domains",
@@ -1203,11 +1204,13 @@ static void __init find_possible_nodes(void)
 	}
 
 	max_nodes = of_read_number(&domains[primary_domain_index], 1);
-	pr_info("Partition configured for %d NUMA nodes.\n", max_nodes);
+	pr_info("[NUMA TRACE] Partition configured for %d NUMA nodes. primary_domain_index=%d\n", max_nodes, primary_domain_index);
 
 	for (i = 0; i < max_nodes; i++) {
-		if (!node_possible(i))
+		if (!node_possible(i)) {
+			pr_info("[NUMA TRACE] Setting node %d as possible\n", i);
 			node_set(i, node_possible_map);
+		}
 	}
 
 	prop_length /= sizeof(int);
