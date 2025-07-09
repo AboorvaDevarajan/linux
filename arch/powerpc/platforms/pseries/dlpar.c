@@ -542,26 +542,33 @@ int handle_dlpar_errorlog(struct pseries_hp_errorlog *hp_elog)
 {
 	int rc;
 
+	pr_info("[DLPAR TRACE] ENTRY: handle_dlpar_errorlog hp_elog=%p resource=%d\n", hp_elog, hp_elog ? hp_elog->resource : -1);
+
 	switch (hp_elog->resource) {
 	case PSERIES_HP_ELOG_RESOURCE_MEM:
+		pr_info("[DLPAR TRACE] Resource: MEM\n");
 		rc = dlpar_memory(hp_elog);
 		break;
 	case PSERIES_HP_ELOG_RESOURCE_CPU:
+		pr_info("[DLPAR TRACE] Resource: CPU\n");
 		rc = dlpar_cpu(hp_elog);
 		break;
 	case PSERIES_HP_ELOG_RESOURCE_PMEM:
+		pr_info("[DLPAR TRACE] Resource: PMEM\n");
 		rc = dlpar_hp_pmem(hp_elog);
 		break;
 	case PSERIES_HP_ELOG_RESOURCE_DT:
+		pr_info("[DLPAR TRACE] Resource: DT\n");
 		rc = dlpar_hp_dt(hp_elog);
 		break;
 
 	default:
-		pr_warn_ratelimited("Invalid resource (%d) specified\n",
+		pr_warn_ratelimited("[DLPAR TRACE] Invalid resource (%d) specified\n",
 				    hp_elog->resource);
 		rc = -EINVAL;
 	}
 
+	pr_info("[DLPAR TRACE] EXIT: handle_dlpar_errorlog rc=%d\n", rc);
 	return rc;
 }
 

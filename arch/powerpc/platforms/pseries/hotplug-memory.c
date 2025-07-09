@@ -865,61 +865,74 @@ int dlpar_memory(struct pseries_hp_errorlog *hp_elog)
 	u32 count, drc_index;
 	int rc;
 
+	pr_info("[DLPAR TRACE] ENTRY: dlpar_memory hp_elog=%p action=%d id_type=%d\n", hp_elog, hp_elog ? hp_elog->action : -1, hp_elog ? hp_elog->id_type : -1);
+
 	lock_device_hotplug();
 
 	switch (hp_elog->action) {
 	case PSERIES_HP_ELOG_ACTION_ADD:
+		pr_info("[DLPAR TRACE] Action: ADD\n");
 		switch (hp_elog->id_type) {
 		case PSERIES_HP_ELOG_ID_DRC_COUNT:
 			count = be32_to_cpu(hp_elog->_drc_u.drc_count);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_COUNT, count=%u\n", count);
 			rc = dlpar_memory_add_by_count(count);
 			break;
 		case PSERIES_HP_ELOG_ID_DRC_INDEX:
 			drc_index = be32_to_cpu(hp_elog->_drc_u.drc_index);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_INDEX, drc_index=0x%x\n", drc_index);
 			rc = dlpar_memory_add_by_index(drc_index);
 			break;
 		case PSERIES_HP_ELOG_ID_DRC_IC:
 			count = be32_to_cpu(hp_elog->_drc_u.ic.count);
 			drc_index = be32_to_cpu(hp_elog->_drc_u.ic.index);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_IC, count=%u, drc_index=0x%x\n", count, drc_index);
 			rc = dlpar_memory_add_by_ic(count, drc_index);
 			break;
 		default:
+			pr_info("[DLPAR TRACE] ID_TYPE: UNKNOWN (%d)\n", hp_elog->id_type);
 			rc = -EINVAL;
 			break;
 		}
-
 		break;
 	case PSERIES_HP_ELOG_ACTION_REMOVE:
+		pr_info("[DLPAR TRACE] Action: REMOVE\n");
 		switch (hp_elog->id_type) {
 		case PSERIES_HP_ELOG_ID_DRC_COUNT:
 			count = be32_to_cpu(hp_elog->_drc_u.drc_count);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_COUNT, count=%u\n", count);
 			rc = dlpar_memory_remove_by_count(count);
 			break;
 		case PSERIES_HP_ELOG_ID_DRC_INDEX:
 			drc_index = be32_to_cpu(hp_elog->_drc_u.drc_index);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_INDEX, drc_index=0x%x\n", drc_index);
 			rc = dlpar_memory_remove_by_index(drc_index);
 			break;
 		case PSERIES_HP_ELOG_ID_DRC_IC:
 			count = be32_to_cpu(hp_elog->_drc_u.ic.count);
 			drc_index = be32_to_cpu(hp_elog->_drc_u.ic.index);
+			pr_info("[DLPAR TRACE] ID_TYPE: DRC_IC, count=%u, drc_index=0x%x\n", count, drc_index);
 			rc = dlpar_memory_remove_by_ic(count, drc_index);
 			break;
 		default:
+			pr_info("[DLPAR TRACE] ID_TYPE: UNKNOWN (%d)\n", hp_elog->id_type);
 			rc = -EINVAL;
 			break;
 		}
-
 		break;
 	default:
-		pr_err("Invalid action (%d) specified\n", hp_elog->action);
+		pr_err("[DLPAR TRACE] Invalid action (%d) specified\n", hp_elog->action);
 		rc = -EINVAL;
 		break;
 	}
 
-	if (!rc)
+	if (!rc) {
+		pr_info("[DLPAR TRACE] Calling drmem_update_dt\n");
 		rc = drmem_update_dt();
+	}
 
 	unlock_device_hotplug();
+	pr_info("[DLPAR TRACE] EXIT: dlpar_memory rc=%d\n", rc);
 	return rc;
 }
 
