@@ -146,6 +146,29 @@ static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 		return -EINVAL;
 	}
 
+	// Trace the entire device tree node structure for lmb_node
+	#define TRACE_DT_MAX_DEPTH 5
+	void trace_dt_node(const struct device_node *node, int depth) {
+		if (!node || depth > TRACE_DT_MAX_DEPTH) return;
+		struct property *prop;
+		struct device_node *child;
+		pr_info("[HOTPLUG TRACE:DT] %*sNode: %s (full path: %s)\n", depth*2, "", node->name, node->full_name);
+		for_each_property_of_node(node, prop) {
+			pr_info("[HOTPLUG TRACE:DT] %*s  Property: %s, len=%d\n", depth*2, "", prop->name, prop->length);
+			if (prop->length > 0 && prop->length <= 32) {
+				char buf[65] = {0};
+				int i;
+				for (i = 0; i < prop->length && i < 32; ++i)
+					snprintf(buf + i*2, 3, "%02x", ((u8*)prop->value)[i]);
+				pr_info("[HOTPLUG TRACE:DT] %*s    Value(hex): %s\n", depth*2, "", buf);
+			}
+		}
+		for_each_child_of_node(node, child) {
+			trace_dt_node(child, depth+1);
+		}
+	}
+	trace_dt_node(lmb_node, 0);
+
 	pr_info("[HOTPLUG TRACE:ASSOC] Getting ibm,associativity property\n");
 	lmb_assoc = of_get_property(lmb_node, "ibm,associativity", NULL);
 	if (!lmb_assoc) {
