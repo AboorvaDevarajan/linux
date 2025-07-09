@@ -294,8 +294,11 @@ static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id)
 	struct pseries_errorlog *pseries_log;
 	struct pseries_hp_errorlog *hp_elog;
 
+	pr_info("[RAS TRACE] ENTRY: ras_hotplug_interrupt irq=%d dev_id=%p\n", irq, dev_id);
+
 	spin_lock(&ras_log_buf_lock);
 
+	pr_info("[RAS TRACE] Calling rtas_call for hotplug event\n");
 	rtas_call(ras_check_exception_token, 6, 1, NULL,
 		  RTAS_VECTOR_EXTERNAL_INTERRUPT, virq_to_hw(irq),
 		  RTAS_HOTPLUG_EVENTS, 0, __pa(&ras_log_buf),
@@ -305,18 +308,24 @@ static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id)
 					   PSERIES_ELOG_SECT_ID_HOTPLUG);
 	hp_elog = (struct pseries_hp_errorlog *)pseries_log->data;
 
+	pr_info("[RAS TRACE] hp_elog resource=%d\n", hp_elog->resource);
+
 	/*
 	 * Since PCI hotplug is not currently supported on pseries, put PCI
 	 * hotplug events on the ras_log_buf to be handled by rtas_errd.
 	 */
 	if (hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_MEM ||
 	    hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_CPU ||
-	    hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_PMEM)
+	    hp_elog->resource == PSERIES_HP_ELOG_RESOURCE_PMEM) {
+		pr_info("[RAS TRACE] queue_hotplug_event called\n");
 		queue_hotplug_event(hp_elog);
-	else
+	} else {
+		pr_info("[RAS TRACE] log_error called\n");
 		log_error(ras_log_buf, ERR_TYPE_RTAS_LOG, 0);
+	}
 
 	spin_unlock(&ras_log_buf_lock);
+	pr_info("[RAS TRACE] EXIT: ras_hotplug_interrupt\n");
 	return IRQ_HANDLED;
 }
 
