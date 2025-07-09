@@ -133,6 +133,7 @@ void dlpar_free_cc_nodes(struct device_node *dn)
 struct device_node *dlpar_configure_connector(__be32 drc_index,
 					      struct device_node *parent)
 {
+	pr_info("[DLPAR TRACE] ENTRY: dlpar_configure_connector drc_index=0x%x parent=%p\n", be32_to_cpu(drc_index), parent);
 	struct device_node *dn;
 	struct device_node *first_dn = NULL;
 	struct device_node *last_dn = NULL;
@@ -145,8 +146,10 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 	int rc = -1;
 
 	cc_token = rtas_function_token(RTAS_FN_IBM_CONFIGURE_CONNECTOR);
-	if (cc_token == RTAS_UNKNOWN_SERVICE)
+	if (cc_token == RTAS_UNKNOWN_SERVICE) {
+		pr_info("[DLPAR TRACE] RTAS_UNKNOWN_SERVICE, returning NULL\n");
 		return NULL;
+	}
 
 	work_area = rtas_work_area_alloc(SZ_4K);
 	data_buf = rtas_work_area_raw_buf(work_area);
@@ -157,18 +160,23 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 
 	do {
 		do {
+			pr_info("[DLPAR TRACE] Calling rtas_call for configure-connector\n");
 			rc = rtas_call(cc_token, 2, 1, NULL,
 				       rtas_work_area_phys(work_area), NULL);
 		} while (rtas_busy_delay(rc));
 
 		switch (rc) {
 		case COMPLETE:
+			pr_info("[DLPAR TRACE] RTAS call COMPLETE\n");
 			break;
 
 		case NEXT_SIBLING:
+			pr_info("[DLPAR TRACE] NEXT_SIBLING: parsing node\n");
 			dn = dlpar_parse_cc_node(ccwa);
-			if (!dn)
+			if (!dn) {
+				pr_info("[DLPAR TRACE] NEXT_SIBLING: failed to parse node, goto cc_error\n");
 				goto cc_error;
+			}
 
 			dn->parent = last_dn->parent;
 			last_dn->sibling = dn;
@@ -176,9 +184,12 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 			break;
 
 		case NEXT_CHILD:
+			pr_info("[DLPAR TRACE] NEXT_CHILD: parsing node\n");
 			dn = dlpar_parse_cc_node(ccwa);
-			if (!dn)
+			if (!dn) {
+				pr_info("[DLPAR TRACE] NEXT_CHILD: failed to parse node, goto cc_error\n");
 				goto cc_error;
+			}
 
 			if (!first_dn) {
 				dn->parent = parent;
@@ -193,9 +204,12 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 			break;
 
 		case NEXT_PROPERTY:
+			pr_info("[DLPAR TRACE] NEXT_PROPERTY: parsing property\n");
 			property = dlpar_parse_cc_property(ccwa);
-			if (!property)
+			if (!property) {
+				pr_info("[DLPAR TRACE] NEXT_PROPERTY: failed to parse property, goto cc_error\n");
 				goto cc_error;
+			}
 
 			if (!last_dn->properties)
 				last_dn->properties = property;
@@ -206,14 +220,14 @@ struct device_node *dlpar_configure_connector(__be32 drc_index,
 			break;
 
 		case PREV_PARENT:
+			pr_info("[DLPAR TRACE] PREV_PARENT\n");
 			last_dn = last_dn->parent;
 			break;
 
 		case MORE_MEMORY:
 		case ERR_CFG_USE:
 		default:
-			printk(KERN_ERR "Unexpected Error (%d) "
-			       "returned from configure-connector\n", rc);
+			pr_err("[DLPAR TRACE] Unexpected Error (%d) returned from configure-connector, goto cc_error\n", rc);
 			goto cc_error;
 		}
 	} while (rc);
@@ -225,9 +239,11 @@ cc_error:
 		if (first_dn)
 			dlpar_free_cc_nodes(first_dn);
 
+		pr_info("[DLPAR TRACE] EXIT: dlpar_configure_connector returning NULL\n");
 		return NULL;
 	}
 
+	pr_info("[DLPAR TRACE] EXIT: dlpar_configure_connector returning first_dn=%p\n", first_dn);
 	return first_dn;
 }
 
@@ -590,21 +606,30 @@ static void pseries_hp_work_fn(struct work_struct *work)
 
 void queue_hotplug_event(struct pseries_hp_errorlog *hp_errlog)
 {
+	pr_info("[DLPAR TRACE] ENTRY: queue_hotplug_event hp_errlog=%p\n", hp_errlog);
+	if (hp_errlog) {
+		pr_info("[DLPAR TRACE] hp_errlog resource=%d action=%d id_type=%d\n", hp_errlog->resource, hp_errlog->action, hp_errlog->id_type);
+	}
 	struct pseries_hp_work *work;
 	struct pseries_hp_errorlog *hp_errlog_copy;
 
 	hp_errlog_copy = kmemdup(hp_errlog, sizeof(*hp_errlog), GFP_ATOMIC);
+	pr_info("[DLPAR TRACE] kmemdup hp_errlog_copy=%p\n", hp_errlog_copy);
 	if (!hp_errlog_copy)
 		return;
 
 	work = kmalloc(sizeof(struct pseries_hp_work), GFP_ATOMIC);
+	pr_info("[DLPAR TRACE] kmalloc work=%p\n", work);
 	if (work) {
 		INIT_WORK((struct work_struct *)work, pseries_hp_work_fn);
 		work->errlog = hp_errlog_copy;
 		queue_work(pseries_hp_wq, (struct work_struct *)work);
+		pr_info("[DLPAR TRACE] Queued work to pseries_hp_wq\n");
 	} else {
 		kfree(hp_errlog_copy);
+		pr_info("[DLPAR TRACE] Failed to allocate work, freed hp_errlog_copy\n");
 	}
+	pr_info("[DLPAR TRACE] EXIT: queue_hotplug_event\n");
 }
 
 static int dlpar_parse_resource(char **cmd, struct pseries_hp_errorlog *hp_elog)
