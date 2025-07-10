@@ -1137,6 +1137,24 @@ static void __init find_possible_nodes(void)
 			goto out;
 	}
 
+	int num_domains_entries = prop_length / sizeof(__be32);
+	pr_info("[NUMA TRACE] Original ibm,max-associativity-domains values: ");
+	for (int idx = 0; idx < num_domains_entries; idx++) {
+		pr_cont("%d ", be32_to_cpu(domains[idx]));
+	}
+	pr_cont("\n");
+
+	for (int idx = 0; idx < num_domains_entries; idx++) {
+		((__be32 *)domains)[idx] = cpu_to_be32(be32_to_cpu(domains[idx]) * 10);
+	}
+
+	pr_info("[NUMA TRACE] Modified ibm,max-associativity-domains values: ");
+	for (int idx = 0; idx < num_domains_entries; idx++) {
+		pr_cont("%d ", be32_to_cpu(domains[idx]));
+	}
+	pr_cont("\n");
+
+
 	max_nodes = of_read_number(&domains[primary_domain_index], 1);
 	pr_info("Partition configured for %d NUMA nodes.\n", max_nodes);
 
