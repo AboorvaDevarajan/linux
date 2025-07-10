@@ -1144,6 +1144,8 @@ static void __init find_possible_nodes(void)
 	}
 	pr_cont("\n");
 
+	pr_info("[NUMA TRACE] primary_domain_index=%d\n", primary_domain_index);
+
 	for (int idx = 0; idx < num_domains_entries; idx++) {
 		((__be32 *)domains)[idx] = cpu_to_be32(be32_to_cpu(domains[idx]) * 10);
 	}
