@@ -1103,17 +1103,23 @@ static void __init setup_node_data(int nid, u64 start_pfn, u64 end_pfn)
 
 static void __init find_possible_nodes(void)
 {
+	pr_info("[NUMA TRACE] ENTRY: find_possible_nodes\n");
 	struct device_node *rtas, *root;
 	const __be32 *domains = NULL;
 	int prop_length, max_nodes;
 	u32 i;
 
-	if (!numa_enabled)
+	if (!numa_enabled) {
+		pr_info("[NUMA TRACE] NUMA disabled, exiting\n");
 		return;
+	}
 
 	rtas = of_find_node_by_path("/rtas");
-	if (!rtas)
+	pr_info("[NUMA TRACE] rtas node=%p\n", rtas);
+	if (!rtas) {
+		pr_info("[NUMA TRACE] No /rtas node found, exiting\n");
 		return;
+	}
 
 	/*
 	 * ibm,current-associativity-domains is a fairly recent property. If
@@ -1125,16 +1131,21 @@ static void __init find_possible_nodes(void)
 	 * so we should consider the max number in that case.
 	 */
 	root = of_find_node_by_path("/");
-	if (!of_get_property(root, "ibm,migratable-partition", NULL))
-		domains = of_get_property(rtas,
-					  "ibm,current-associativity-domains",
-					  &prop_length);
+	pr_info("[NUMA TRACE] root node=%p\n", root);
+	if (!of_get_property(root, "ibm,migratable-partition", NULL)) {
+		pr_info("[NUMA TRACE] ibm,migratable-partition not found, getting ibm,current-associativity-domains\n");
+		domains = of_get_property(rtas, "ibm,current-associativity-domains", &prop_length);
+		pr_info("[NUMA TRACE] domains from current-associativity-domains=%p, prop_length=%d\n", domains, prop_length);
+	}
 	of_node_put(root);
 	if (!domains) {
-		domains = of_get_property(rtas, "ibm,max-associativity-domains",
-					&prop_length);
-		if (!domains)
+		pr_info("[NUMA TRACE] domains not set, getting ibm,max-associativity-domains\n");
+		domains = of_get_property(rtas, "ibm,max-associativity-domains", &prop_length);
+		pr_info("[NUMA TRACE] domains from max-associativity-domains=%p, prop_length=%d\n", domains, prop_length);
+		if (!domains) {
+			pr_info("[NUMA TRACE] domains still not set, exiting\n");
 			goto out;
+		}
 	}
 
 	int num_domains_entries = prop_length / sizeof(__be32);
@@ -1147,7 +1158,8 @@ static void __init find_possible_nodes(void)
 	pr_info("[NUMA TRACE] primary_domain_index=%d\n", primary_domain_index);
 
 	for (int idx = 0; idx < num_domains_entries; idx++) {
-		((__be32 *)domains)[idx] = cpu_to_be32(be32_to_cpu(domains[idx]) * 10);
+		if(idx != 0 && idx != primary_domain_index)
+			((__be32 *)domains)[idx] = cpu_to_be32(be32_to_cpu(domains[idx]) * 10);
 	}
 
 	pr_info("[NUMA TRACE] Modified ibm,max-associativity-domains values: ");
@@ -1156,21 +1168,26 @@ static void __init find_possible_nodes(void)
 	}
 	pr_cont("\n");
 
-
 	max_nodes = of_read_number(&domains[primary_domain_index], 1);
+	pr_info("[NUMA TRACE] max_nodes=%d (from domains[%d])\n", max_nodes, primary_domain_index);
 	pr_info("Partition configured for %d NUMA nodes.\n", max_nodes);
 
 	for (i = 0; i < max_nodes; i++) {
-		if (!node_possible(i))
+		if (!node_possible(i)) {
+			pr_info("[NUMA TRACE] Setting node %d as possible\n", i);
 			node_set(i, node_possible_map);
+		}
 	}
 
 	prop_length /= sizeof(int);
-	if (prop_length > primary_domain_index + 2)
+	if (prop_length > primary_domain_index + 2) {
+		pr_info("[NUMA TRACE] Enabling coregroup support\n");
 		coregroup_enabled = 1;
+	}
 
 out:
 	of_node_put(rtas);
+	pr_info("[NUMA TRACE] EXIT: find_possible_nodes\n");
 }
 
 void __init mem_topology_setup(void)
