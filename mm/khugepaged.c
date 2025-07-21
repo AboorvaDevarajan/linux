@@ -2611,6 +2611,75 @@ static void set_recommended_min_free_kbytes(void)
 {
 	struct zone *zone;
 	int nr_zones = 0;
+	unsigned long recommended_min;
+
+	if (!hugepage_pmd_enabled()) {
+		calculate_min_free_kbytes();
+		goto update_wmarks;
+	}
+
+	for_each_populated_zone(zone) {
+		/*
+		 * We don't need to worry about fragmentation of
+		 * ZONE_MOVABLE since it only has movable pages.
+		 */
+		if (zone_idx(zone) > gfp_zone(GFP_USER))
+			continue;
+
+		nr_zones++;
+	}
+
+	pr_debug("Number of relevant zones: %d\n", nr_zones);
+
+	/* Ensure 2 pageblocks are free to assist fragmentation avoidance */
+	recommended_min = pageblock_nr_pages * nr_zones * 2;
+	pr_debug("After initial 2 pageblocks: recommended_min = %lu\n", recommended_min);
+
+	/*
+	 * Make sure that on average at least two pageblocks are almost free
+	 * of another type, one for a migratetype to fall back to and a
+	 * second to avoid subsequent fallbacks of other types There are 3
+	 * MIGRATE_TYPES we care about.
+	 */
+	recommended_min += pageblock_nr_pages * nr_zones *
+			   MIGRATE_PCPTYPES * MIGRATE_PCPTYPES;
+	pr_debug("After MIGRATE_PCPTYPES adjustment: recommended_min = %lu\n", recommended_min);
+
+	/* don't ever allow to reserve more than 5% of the lowmem */
+	{
+		unsigned long free_pages = nr_free_buffer_pages();
+		unsigned long limit = free_pages / 20;
+		pr_debug("nr_free_buffer_pages = %lu, 5%% = %lu\n", free_pages, limit);
+
+		if (recommended_min > limit) {
+			pr_debug("recommended_min (%lu) clamped to limit (%lu)\n", recommended_min, limit);
+		}
+
+		recommended_min = min(recommended_min, limit);
+	}
+	pr_debug("After clamping to 5%% of free memory: recommended_min = %lu\n", recommended_min);
+
+	/* Adjust for PAGE_SHIFT (typically 12) to get kbytes */
+	recommended_min <<= (PAGE_SHIFT - 10);
+	pr_debug("After PAGE_SHIFT adjustment: recommended_min = %lu kB\n", recommended_min);
+
+	if (recommended_min > min_free_kbytes) {
+		if (user_min_free_kbytes >= 0)
+			pr_info("raising min_free_kbytes from %d to %lu to help transparent hugepage allocations\n",
+				min_free_kbytes, recommended_min);
+
+		min_free_kbytes = recommended_min;
+	}
+
+update_wmarks:
+	setup_per_zone_wmarks();
+}
+
+
+static void set_recommended_min_free_kbytes1(void)
+{
+	struct zone *zone;
+	int nr_zones = 0;
 	unsigned long base_pages, fallback_pages, total_pages;
 	unsigned long recommended_min, lowmem_cap;
 
