@@ -2613,48 +2613,61 @@ static void set_recommended_min_free_kbytes(void)
 	int nr_zones = 0;
 	unsigned long recommended_min;
 
+	pr_info("min_free_kbytes: calculating recommended min_free_kbytes\n");
+
 	if (!hugepage_pmd_enabled()) {
+		pr_info("min_free_kbytes: hugepage PMD not enabled, using default calculation\n");
 		calculate_min_free_kbytes();
 		goto update_wmarks;
 	}
 
-	for_each_populated_zone(zone) {
-		/*
-		 * We don't need to worry about fragmentation of
-		 * ZONE_MOVABLE since it only has movable pages.
-		 */
-		if (zone_idx(zone) > gfp_zone(GFP_USER))
-			continue;
+	pr_info("min_free_kbytes: hugepage PMD is enabled, scanning zones\n");
 
+	for_each_populated_zone(zone) {
+		if (zone_idx(zone) > gfp_zone(GFP_USER)) {
+			pr_info("min_free_kbytes: skipping zone %s (idx: %d > GFP_USER)\n",
+				zone->name, zone_idx(zone));
+			continue;
+		}
+
+		pr_info("min_free_kbytes: counting eligible zone %s\n", zone->name);
 		nr_zones++;
 	}
 
+	pr_info("min_free_kbytes: number of eligible zones = %d\n", nr_zones);
+
 	/* Ensure 2 pageblocks are free to assist fragmentation avoidance */
 	recommended_min = pageblock_nr_pages * nr_zones * 2;
+	pr_info("min_free_kbytes: base recommendation (2 pageblocks/zone) = %lu kB\n",
+		recommended_min << (PAGE_SHIFT - 10));
 
-	/*
-	 * Make sure that on average at least two pageblocks are almost free
-	 * of another type, one for a migratetype to fall back to and a
-	 * second to avoid subsequent fallbacks of other types There are 3
-	 * MIGRATE_TYPES we care about.
-	 */
+	/* Add padding for fallback behavior among migrate types */
 	recommended_min += pageblock_nr_pages * nr_zones *
 			   MIGRATE_PCPTYPES * MIGRATE_PCPTYPES;
+	pr_info("min_free_kbytes: after adding fallback buffer = %lu kB\n",
+		recommended_min << (PAGE_SHIFT - 10));
 
-	/* don't ever allow to reserve more than 5% of the lowmem */
+	/* Cap to 5% of free buffer pages */
 	recommended_min = min(recommended_min,
 			      (unsigned long) nr_free_buffer_pages() / 20);
-	recommended_min <<= (PAGE_SHIFT-10);
+	pr_info("min_free_kbytes: after limiting to 5%% of lowmem = %lu kB\n",
+		recommended_min << (PAGE_SHIFT - 10));
+
+	recommended_min <<= (PAGE_SHIFT - 10); // Convert pages to kB
 
 	if (recommended_min > min_free_kbytes) {
 		if (user_min_free_kbytes >= 0)
-			pr_info("raising min_free_kbytes from %d to %lu to help transparent hugepage allocations\n",
+			pr_info("min_free_kbytes: raising min_free_kbytes from %d to %lu to help THP allocations\n",
 				min_free_kbytes, recommended_min);
 
 		min_free_kbytes = recommended_min;
+	} else {
+		pr_info("min_free_kbytes: no change to min_free_kbytes (%d >= %lu)\n",
+			min_free_kbytes, recommended_min);
 	}
 
 update_wmarks:
+	pr_info("min_free_kbytes: updating per-zone watermarks\n");
 	setup_per_zone_wmarks();
 }
 
@@ -2662,11 +2675,19 @@ int start_stop_khugepaged(void)
 {
 	int err = 0;
 
+	pr_info("min_free_kbytes: attempting to start/stop khugepaged\n");
+
 	mutex_lock(&khugepaged_mutex);
+	pr_info("min_free_kbytes: acquired khugepaged_mutex\n");
+
 	if (hugepage_pmd_enabled()) {
-		if (!khugepaged_thread)
-			khugepaged_thread = kthread_run(khugepaged, NULL,
-							"khugepaged");
+		pr_info("min_free_kbytes: hugepage PMD is enabled\n");
+
+		if (!khugepaged_thread) {
+			pr_info("min_free_kbytes: no existing khugepaged thread, creating new one\n");
+			khugepaged_thread = kthread_run(khugepaged, NULL, "khugepaged");
+		}
+
 		if (IS_ERR(khugepaged_thread)) {
 			pr_err("khugepaged: kthread_run(khugepaged) failed\n");
 			err = PTR_ERR(khugepaged_thread);
@@ -2674,25 +2695,44 @@ int start_stop_khugepaged(void)
 			goto fail;
 		}
 
-		if (!list_empty(&khugepaged_scan.mm_head))
+		if (!list_empty(&khugepaged_scan.mm_head)) {
+			pr_info("min_free_kbytes: scan list not empty, waking up khugepaged thread\n");
 			wake_up_interruptible(&khugepaged_wait);
+		}
 	} else if (khugepaged_thread) {
+		pr_info("min_free_kbytes: hugepage PMD disabled, stopping khugepaged thread\n");
 		kthread_stop(khugepaged_thread);
 		khugepaged_thread = NULL;
 	}
+
+	pr_info("min_free_kbytes: setting recommended min free kbytes\n");
 	set_recommended_min_free_kbytes();
+
 fail:
 	mutex_unlock(&khugepaged_mutex);
+	pr_info("min_free_kbytes: released khugepaged_mutex, returning %d\n", err);
+
 	return err;
 }
 
 void khugepaged_min_free_kbytes_update(void)
 {
+	pr_info("min_free_kbytes: updating min free kbytes if conditions met\n");
+
 	mutex_lock(&khugepaged_mutex);
-	if (hugepage_pmd_enabled() && khugepaged_thread)
+	pr_info("min_free_kbytes: acquired khugepaged_mutex\n");
+
+	if (hugepage_pmd_enabled() && khugepaged_thread) {
+		pr_info("min_free_kbytes: hugepage PMD enabled and khugepaged thread exists, setting min free kbytes\n");
 		set_recommended_min_free_kbytes();
+	} else {
+		pr_info("min_free_kbytes: conditions not met, skipping update\n");
+	}
+
 	mutex_unlock(&khugepaged_mutex);
+	pr_info("min_free_kbytes: released khugepaged_mutex\n");
 }
+
 
 bool current_is_khugepaged(void)
 {
