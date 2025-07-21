@@ -6220,18 +6220,23 @@ void calculate_min_free_kbytes(void)
 {
 	unsigned long lowmem_kbytes;
 	int new_min_free_kbytes;
+	unsigned long nr_free_pages = nr_free_buffer_pages();
 
-	lowmem_kbytes = nr_free_buffer_pages() * (PAGE_SIZE >> 10);
+	lowmem_kbytes = nr_free_pages * (PAGE_SIZE >> 10);
 	new_min_free_kbytes = int_sqrt(lowmem_kbytes * 16);
 
-	if (new_min_free_kbytes > user_min_free_kbytes)
+	pr_info("min_free_kbytes: Calculation details: nr_free_buffer_pages=%lu, PAGE_SIZE=%lu, lowmem_kbytes=%lu\n",
+		nr_free_pages, PAGE_SIZE, lowmem_kbytes);
+	pr_info("min_free_kbytes: calculated default value %dKB\n", new_min_free_kbytes);
+
+	if (new_min_free_kbytes > user_min_free_kbytes) {
 		min_free_kbytes = clamp(new_min_free_kbytes, 128, 262144);
-	else
+		pr_info("min_free_kbytes: set to automatically calculated value %dKB\n", min_free_kbytes);
+	} else {
 		pr_warn("min_free_kbytes is not updated to %d because user defined value %d is preferred\n",
 				new_min_free_kbytes, user_min_free_kbytes);
-
+	}
 }
-
 int __meminit init_per_zone_wmark_min(void)
 {
 	calculate_min_free_kbytes();
@@ -6266,6 +6271,8 @@ static int min_free_kbytes_sysctl_handler(const struct ctl_table *table, int wri
 
 	if (write) {
 		user_min_free_kbytes = min_free_kbytes;
+		pr_info("min_free_kbytes: set to user-defined value %dKB\n",
+			user_min_free_kbytes);
 		setup_per_zone_wmarks();
 	}
 	return 0;
