@@ -2611,12 +2611,13 @@ static void set_recommended_min_free_kbytes(void)
 {
 	struct zone *zone;
 	int nr_zones = 0;
-	unsigned long recommended_min;
+	unsigned long base_pages, fallback_pages, total_pages;
+	unsigned long recommended_min, lowmem_cap;
 
 	pr_info("min_free_kbytes: calculating recommended min_free_kbytes\n");
 
 	if (!hugepage_pmd_enabled()) {
-		pr_info("min_free_kbytes: hugepage PMD not enabled, using default calculation\n");
+		pr_info("min_free_kbytes: hugepage PMD not enabled, falling back to default calculation\n");
 		calculate_min_free_kbytes();
 		goto update_wmarks;
 	}
@@ -2624,45 +2625,55 @@ static void set_recommended_min_free_kbytes(void)
 	pr_info("min_free_kbytes: hugepage PMD is enabled, scanning zones\n");
 
 	for_each_populated_zone(zone) {
+		/*
+		 * Skip ZONE_MOVABLE and higher zones not suitable for THP
+		 */
 		if (zone_idx(zone) > gfp_zone(GFP_USER)) {
 			pr_info("min_free_kbytes: skipping zone %s (idx: %d > GFP_USER)\n",
 				zone->name, zone_idx(zone));
 			continue;
 		}
 
-		pr_info("min_free_kbytes: counting eligible zone %s\n", zone->name);
+		pr_info("min_free_kbytes: counting eligible zone %s (idx: %d)\n",
+			zone->name, zone_idx(zone));
 		nr_zones++;
 	}
 
 	pr_info("min_free_kbytes: number of eligible zones = %d\n", nr_zones);
+	pr_info("min_free_kbytes: pageblock_nr_pages = %lu, MIGRATE_PCPTYPES = %d\n",
+		pageblock_nr_pages, MIGRATE_PCPTYPES);
 
-	/* Ensure 2 pageblocks are free to assist fragmentation avoidance */
-	recommended_min = pageblock_nr_pages * nr_zones * 2;
-	pr_info("min_free_kbytes: base recommendation (2 pageblocks/zone) = %lu kB\n",
-		recommended_min << (PAGE_SHIFT - 10));
+	/* Base requirement: 2 pageblocks per zone */
+	base_pages = pageblock_nr_pages * nr_zones * 2;
+	pr_info("min_free_kbytes: base_pages = %lu -> %lu kB\n",
+		base_pages, base_pages << (PAGE_SHIFT - 10));
 
-	/* Add padding for fallback behavior among migrate types */
-	recommended_min += pageblock_nr_pages * nr_zones *
-			   MIGRATE_PCPTYPES * MIGRATE_PCPTYPES;
-	pr_info("min_free_kbytes: after adding fallback buffer = %lu kB\n",
-		recommended_min << (PAGE_SHIFT - 10));
+	/* Fallback padding for migrate type fallbacks */
+	fallback_pages = pageblock_nr_pages * nr_zones *
+			 MIGRATE_PCPTYPES * MIGRATE_PCPTYPES;
+	pr_info("min_free_kbytes: fallback_pages = %lu -> %lu kB\n",
+		fallback_pages, fallback_pages << (PAGE_SHIFT - 10));
 
-	/* Cap to 5% of free buffer pages */
-	recommended_min = min(recommended_min,
-			      (unsigned long) nr_free_buffer_pages() / 20);
-	pr_info("min_free_kbytes: after limiting to 5%% of lowmem = %lu kB\n",
-		recommended_min << (PAGE_SHIFT - 10));
+	total_pages = base_pages + fallback_pages;
+	pr_info("min_free_kbytes: total recommended pages = %lu -> %lu kB\n",
+		total_pages, total_pages << (PAGE_SHIFT - 10));
 
-	recommended_min <<= (PAGE_SHIFT - 10); // Convert pages to kB
+	/* Cap recommendation to 5% of lowmem */
+	lowmem_cap = nr_free_buffer_pages() / 20;
+	pr_info("min_free_kbytes: 5%% of lowmem = %lu pages -> %lu kB\n",
+		lowmem_cap, lowmem_cap << (PAGE_SHIFT - 10));
+
+	recommended_min = min(total_pages, lowmem_cap);
+	recommended_min <<= (PAGE_SHIFT - 10); // Convert to kB
 
 	if (recommended_min > min_free_kbytes) {
-		if (user_min_free_kbytes >= 0)
+		if (user_min_free_kbytes >= 0) {
 			pr_info("min_free_kbytes: raising min_free_kbytes from %d to %lu to help THP allocations\n",
 				min_free_kbytes, recommended_min);
-
+		}
 		min_free_kbytes = recommended_min;
 	} else {
-		pr_info("min_free_kbytes: no change to min_free_kbytes (%d >= %lu)\n",
+		pr_info("min_free_kbytes: keeping existing min_free_kbytes (%d >= %lu)\n",
 			min_free_kbytes, recommended_min);
 	}
 
@@ -2670,6 +2681,7 @@ update_wmarks:
 	pr_info("min_free_kbytes: updating per-zone watermarks\n");
 	setup_per_zone_wmarks();
 }
+
 
 int start_stop_khugepaged(void)
 {
