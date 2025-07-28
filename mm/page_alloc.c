@@ -6037,8 +6037,10 @@ static void calculate_totalreserve_pages(void)
 	unsigned long reserve_pages = 0;
 	enum zone_type i, j;
 
-	for_each_online_pgdat(pgdat) {
+	pr_info("[WMARK_INTERNAL] Starting calculation of totalreserve_pages...\n");
 
+	for_each_online_pgdat(pgdat) {
+		pr_info("[WMARK_INTERNAL] Processing pgdat node ID: %d\n", pgdat->node_id);
 		pgdat->totalreserve_pages = 0;
 
 		for (i = 0; i < MAX_NR_ZONES; i++) {
@@ -6046,26 +6048,41 @@ static void calculate_totalreserve_pages(void)
 			long max = 0;
 			unsigned long managed_pages = zone_managed_pages(zone);
 
+			pr_info("[WMARK_INTERNAL]   Zone %s: managed_pages = %lu\n",
+				zone->name, managed_pages);
+
 			/* Find valid and maximum lowmem_reserve in the zone */
 			for (j = i; j < MAX_NR_ZONES; j++) {
 				if (zone->lowmem_reserve[j] > max)
 					max = zone->lowmem_reserve[j];
 			}
 
-			/* we treat the high watermark as reserved pages. */
-			max += high_wmark_pages(zone);
+			pr_info("[WMARK_INTERNAL]     Max lowmem_reserve for %s: %ld\n", zone->name, max);
 
-			if (max > managed_pages)
+			/* Add high watermark to reserve */
+			max += high_wmark_pages(zone);
+			pr_info("[WMARK_INTERNAL]     + high_wmark_pages = %lu, total tentative reserve = %ld\n",
+				high_wmark_pages(zone), max);
+
+			if (max > managed_pages) {
+				pr_info("[WMARK_INTERNAL]     Cap reserve to managed_pages (%lu)\n", managed_pages);
 				max = managed_pages;
+			}
 
 			pgdat->totalreserve_pages += max;
+			pr_info("[WMARK_INTERNAL]     Updated pgdat->totalreserve_pages = %lu\n",
+				pgdat->totalreserve_pages);
 
 			reserve_pages += max;
 		}
 	}
+
 	totalreserve_pages = reserve_pages;
+
+	pr_info("[WMARK_INTERNAL] Final totalreserve_pages = %lu\n", totalreserve_pages);
 	trace_mm_calculate_totalreserve_pages(totalreserve_pages);
 }
+
 
 /*
  * setup_per_zone_lowmem_reserve - called whenever
@@ -6078,31 +6095,48 @@ static void setup_per_zone_lowmem_reserve(void)
 	struct pglist_data *pgdat;
 	enum zone_type i, j;
 
+	pr_info("[WMARK_INTERNAL] Setting up per-zone lowmem reserves...\n");
+
 	for_each_online_pgdat(pgdat) {
+		pr_info("[WMARK_INTERNAL] Processing pgdat node ID: %d\n", pgdat->node_id);
+
 		for (i = 0; i < MAX_NR_ZONES - 1; i++) {
 			struct zone *zone = &pgdat->node_zones[i];
 			int ratio = sysctl_lowmem_reserve_ratio[i];
 			bool clear = !ratio || !zone_managed_pages(zone);
 			unsigned long managed_pages = 0;
 
+			pr_info("[WMARK_INTERNAL] Zone %s: ratio = %d, managed_pages = %lu\n",
+				zone->name, ratio, zone_managed_pages(zone));
+
 			for (j = i + 1; j < MAX_NR_ZONES; j++) {
 				struct zone *upper_zone = &pgdat->node_zones[j];
 
 				managed_pages += zone_managed_pages(upper_zone);
 
-				if (clear)
+				if (clear) {
 					zone->lowmem_reserve[j] = 0;
-				else
+					pr_info("[WMARK_INTERNAL]   Clearing reserve from %s to %s\n",
+						zone->name, upper_zone->name);
+				} else {
 					zone->lowmem_reserve[j] = managed_pages / ratio;
+					pr_info("[WMARK_INTERNAL]   Setting reserve from %s to %s = %lu (managed = %lu / ratio = %d)\n",
+						zone->name, upper_zone->name,
+						zone->lowmem_reserve[j],
+						managed_pages, ratio);
+				}
+
 				trace_mm_setup_per_zone_lowmem_reserve(zone, upper_zone,
-								       zone->lowmem_reserve[j]);
+				                                        zone->lowmem_reserve[j]);
 			}
 		}
 	}
 
-	/* update totalreserve_pages */
+	pr_info("[WMARK_INTERNAL] Calling calculate_totalreserve_pages() from setup_per_zone_lowmem_reserve()\n");
 	calculate_totalreserve_pages();
+	pr_info("[WMARK_INTERNAL] Total reserve pages recalculated.\n");
 }
+
 
 static void __setup_per_zone_wmarks(void)
 {
@@ -6111,62 +6145,67 @@ static void __setup_per_zone_wmarks(void)
 	struct zone *zone;
 	unsigned long flags;
 
+	pr_info("[WMARK_INTERNAL] Calculating pages_min from min_free_kbytes: %lu -> %lu pages\n",
+		min_free_kbytes, pages_min);
+
 	/* Calculate total number of !ZONE_HIGHMEM and !ZONE_MOVABLE pages */
 	for_each_zone(zone) {
 		if (!is_highmem(zone) && zone_idx(zone) != ZONE_MOVABLE)
 			lowmem_pages += zone_managed_pages(zone);
 	}
 
+	pr_info("[WMARK_INTERNAL] Total lowmem pages (excluding HIGHMEM and MOVABLE): %lu\n",
+		lowmem_pages);
+
 	for_each_zone(zone) {
 		u64 tmp;
 
 		spin_lock_irqsave(&zone->lock, flags);
+
 		tmp = (u64)pages_min * zone_managed_pages(zone);
 		tmp = div64_ul(tmp, lowmem_pages);
+
 		if (is_highmem(zone) || zone_idx(zone) == ZONE_MOVABLE) {
-			/*
-			 * __GFP_HIGH and PF_MEMALLOC allocations usually don't
-			 * need highmem and movable zones pages, so cap pages_min
-			 * to a small  value here.
-			 *
-			 * The WMARK_HIGH-WMARK_LOW and (WMARK_LOW-WMARK_MIN)
-			 * deltas control async page reclaim, and so should
-			 * not be capped for highmem and movable zones.
-			 */
 			unsigned long min_pages;
 
 			min_pages = zone_managed_pages(zone) / 1024;
 			min_pages = clamp(min_pages, SWAP_CLUSTER_MAX, 128UL);
 			zone->_watermark[WMARK_MIN] = min_pages;
+
+			pr_info("[WMARK_INTERNAL] Zone %s (HIGHMEM or MOVABLE): WMARK_MIN = %lu (clamped)\n",
+				zone->name, min_pages);
 		} else {
-			/*
-			 * If it's a lowmem zone, reserve a number of pages
-			 * proportionate to the zone's size.
-			 */
 			zone->_watermark[WMARK_MIN] = tmp;
+
+			pr_info("[WMARK_INTERNAL] Zone %s: WMARK_MIN = %llu (proportional)\n",
+				zone->name, tmp);
 		}
 
-		/*
-		 * Set the kswapd watermarks distance according to the
-		 * scale factor in proportion to available memory, but
-		 * ensure a minimum size on small systems.
-		 */
 		tmp = max_t(u64, tmp >> 2,
-			    mult_frac(zone_managed_pages(zone),
-				      watermark_scale_factor, 10000));
+			mult_frac(zone_managed_pages(zone),
+				  watermark_scale_factor, 10000));
 
 		zone->watermark_boost = 0;
 		zone->_watermark[WMARK_LOW]  = min_wmark_pages(zone) + tmp;
 		zone->_watermark[WMARK_HIGH] = low_wmark_pages(zone) + tmp;
 		zone->_watermark[WMARK_PROMO] = high_wmark_pages(zone) + tmp;
-		trace_mm_setup_per_zone_wmarks(zone);
 
+		pr_info("[WMARK_INTERNAL] Zone %s: LOW = %lu, HIGH = %lu, PROMO = %lu (scale factor = %u)\n",
+			zone->name,
+			zone->_watermark[WMARK_LOW],
+			zone->_watermark[WMARK_HIGH],
+			zone->_watermark[WMARK_PROMO],
+			watermark_scale_factor);
+
+		trace_mm_setup_per_zone_wmarks(zone);
 		spin_unlock_irqrestore(&zone->lock, flags);
 	}
 
-	/* update totalreserve_pages */
+	pr_info("[WMARK_INTERNAL] Calling calculate_totalreserve_pages()...\n");
 	calculate_totalreserve_pages();
+	pr_info("[WMARK_INTERNAL] Total reserve pages calculated.\n");
 }
+
 
 /**
  * setup_per_zone_wmarks - called when min_free_kbytes changes
@@ -6180,17 +6219,26 @@ void setup_per_zone_wmarks(void)
 	struct zone *zone;
 	static DEFINE_SPINLOCK(lock);
 
+	pr_info("[WMARK_SETUP] Starting per-zone watermark setup\n");
+
 	spin_lock(&lock);
+	pr_info("[WMARK_SETUP] Calling __setup_per_zone_wmarks()...\n");
 	__setup_per_zone_wmarks();
 	spin_unlock(&lock);
+	pr_info("[WMARK_SETUP] __setup_per_zone_wmarks() complete\n");
 
 	/*
 	 * The watermark size have changed so update the pcpu batch
 	 * and high limits or the limits may be inappropriate.
 	 */
-	for_each_zone(zone)
+	pr_info("[WMARK_SETUP] Updating zone PCP batch and high limits...\n");
+	for_each_zone(zone) {
+		pr_info("[WMARK_SETUP] Updating PCP limits for zone: %s\n", zone->name);
 		zone_pcp_update(zone, 0);
+	}
+	pr_info("[WMARK_SETUP] Per-zone watermark setup complete\n");
 }
+
 
 /*
  * Initialise min_free_kbytes.
@@ -6239,20 +6287,46 @@ void calculate_min_free_kbytes(void)
 }
 int __meminit init_per_zone_wmark_min(void)
 {
+	pr_info("[WMARK_INIT] Initializing per-zone watermarks and lowmem reserves\n");
+
+	// Step 1: Calculate min_free_kbytes
+	pr_info("[WMARK_INIT] Calculating min_free_kbytes...\n");
 	calculate_min_free_kbytes();
+	pr_info("[WMARK_INIT] min_free_kbytes = %lu\n", min_free_kbytes);
+
+	// Step 2: Set up per-zone watermarks
+	pr_info("[WMARK_INIT] Setting up per-zone watermarks...\n");
 	setup_per_zone_wmarks();
+	pr_info("[WMARK_INIT] Per-zone watermarks set.\n");
+
+	// Step 3: Refresh zone stat thresholds
+	pr_info("[WMARK_INIT] Refreshing zone stat thresholds...\n");
 	refresh_zone_stat_thresholds();
+	pr_info("[WMARK_INIT] Zone stat thresholds refreshed.\n");
+
+	// Step 4: Setup per-zone lowmem_reserve
+	pr_info("[WMARK_INIT] Setting up per-zone lowmem reserves...\n");
 	setup_per_zone_lowmem_reserve();
+	pr_info("[WMARK_INIT] Per-zone lowmem reserves set.\n");
 
 #ifdef CONFIG_NUMA
+	// Step 5: NUMA-specific initialization
+	pr_info("[WMARK_INIT] Setting up NUMA unmapped and slab ratios...\n");
 	setup_min_unmapped_ratio();
 	setup_min_slab_ratio();
+	pr_info("[WMARK_INIT] NUMA unmapped and slab ratios set.\n");
 #endif
 
+	// Step 6: Update khugepaged min_free_kbytes
+	pr_info("[WMARK_INIT] Updating khugepaged min_free_kbytes...\n");
 	khugepaged_min_free_kbytes_update();
+	pr_info("[WMARK_INIT] khugepaged min_free_kbytes updated.\n");
+
+	pr_info("[WMARK_INIT] Per-zone watermark initialization complete.\n");
 
 	return 0;
 }
+
 postcore_initcall(init_per_zone_wmark_min)
 
 /*
