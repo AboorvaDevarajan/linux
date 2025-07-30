@@ -414,6 +414,12 @@ static __init void hash_kfence_alloc_pool(void)
 	if (!kfence_early_init_enabled())
 		goto err;
 
+	/* Disable KFENCE when hash MMU is enabled */
+	if (mmu_has_feature(MMU_FTR_HPTE_TABLE) && !radix_enabled()) {
+		pr_info("Disabling kfence - hash MMU is enabled\n");
+		goto err;
+	}
+
 	/* allocate linear map for kfence within RMA region */
 	linear_map_kf_hash_count = KFENCE_POOL_SIZE >> PAGE_SHIFT;
 	linear_map_kf_hash_slots = memblock_alloc_try_nid(
