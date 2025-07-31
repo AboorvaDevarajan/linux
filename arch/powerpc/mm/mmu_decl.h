@@ -173,6 +173,11 @@ void __init mmu_mapin_immr(void);
 
 static inline bool debug_pagealloc_enabled_or_kfence(void)
 {
+#ifdef CONFIG_PPC64
+	/* KFENCE is not supported with hash MMU */
+	return (IS_ENABLED(CONFIG_KFENCE) && radix_enabled()) || 
+	       debug_pagealloc_enabled();
+#endif
 	return IS_ENABLED(CONFIG_KFENCE) || debug_pagealloc_enabled();
 }
 
