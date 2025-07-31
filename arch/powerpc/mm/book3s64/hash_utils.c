@@ -441,7 +441,7 @@ static __init void hash_kfence_alloc_pool(void)
 
 	return;
 err:
-	pr_info("Disabling kfence\n");
+	pr_info("hash-mmu: Disabling KFENCE - not supported with hash MMU\n");
 	disable_kfence();
 }
 

@@ -18,6 +18,16 @@
 extern bool kfence_early_init;
 extern bool kfence_disabled;
 
+static inline bool kfence_early_init_enabled(void)
+{
+#ifdef CONFIG_PPC64
+	/* KFENCE is not supported with hash MMU */
+	return IS_ENABLED(CONFIG_KFENCE) && kfence_early_init && radix_enabled();
+#else
+	return IS_ENABLED(CONFIG_KFENCE) && kfence_early_init;
+#endif
+}
+
 static inline void disable_kfence(void)
 {
 	kfence_disabled = true;
@@ -25,12 +35,7 @@ static inline void disable_kfence(void)
 
 static inline bool arch_kfence_init_pool(void)
 {
-	return !kfence_disabled;
-}
-
-static inline bool kfence_early_init_enabled(void)
-{
-	return IS_ENABLED(CONFIG_KFENCE) && kfence_early_init;
+	return !kfence_disabled && kfence_early_init_enabled();
 }
 
 #ifdef CONFIG_PPC64

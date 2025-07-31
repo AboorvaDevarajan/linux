@@ -15,6 +15,7 @@
  */
 #include <linux/mm.h>
 #include <asm/mmu.h>
+#include <asm/kfence.h>
 
 #ifdef CONFIG_PPC_MMU_NOHASH
 #include <asm/trace.h>
@@ -173,7 +174,7 @@ void __init mmu_mapin_immr(void);
 
 static inline bool debug_pagealloc_enabled_or_kfence(void)
 {
-	return IS_ENABLED(CONFIG_KFENCE) || debug_pagealloc_enabled();
+	return kfence_early_init_enabled() || debug_pagealloc_enabled();
 }
 
 #ifdef CONFIG_MEMORY_HOTPLUG
