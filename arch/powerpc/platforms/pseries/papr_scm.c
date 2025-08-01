@@ -151,8 +151,8 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 		return rc;
 
 	p->bound_addr = saved;
-	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n",
-		p->drc_index, (unsigned long)saved);
+	dev_dbg(&p->pdev->dev, "BOUND_ADDR: drc_pmem_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n",
+		p->drc_index, p->bound_addr, current->pid);
 	return rc;
 }
 
@@ -216,7 +216,8 @@ static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 		goto err_out;
 
 	p->bound_addr = start_addr;
-	dev_dbg(&p->pdev->dev, "bound drc 0x%x to 0x%lx\n", p->drc_index, start_addr);
+	dev_dbg(&p->pdev->dev, "BOUND_ADDR: drc_pmem_query_n_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n", 
+		p->drc_index, p->bound_addr, current->pid);
 	return rc;
 
 err_out:
@@ -1257,6 +1258,8 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	online_nid = numa_map_to_online_node(target_nid);
 	ndr_desc.numa_node = online_nid;
 	ndr_desc.target_node = target_nid;
+	dev_dbg(dev, "BOUND_ADDR: papr_scm_nvdimm_init STEP1 - Setting up region descriptor bound_addr=0x%llx pid=%d\n", 
+		p->bound_addr, current->pid);
 	ndr_desc.res = &p->res;
 	ndr_desc.of_node = p->dn;
 	ndr_desc.provider_data = p;
@@ -1269,6 +1272,8 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 		ndr_desc.flush = papr_scm_pmem_flush;
 	}
 
+	dev_dbg(dev, "BOUND_ADDR: papr_scm_nvdimm_init STEP2 - Creating region with bound_addr=0x%llx pid=%d\n", 
+		p->bound_addr, current->pid);
 	if (p->is_volatile)
 		p->region = nvdimm_volatile_region_create(p->bus, &ndr_desc);
 	else {
@@ -1442,19 +1447,23 @@ static int papr_scm_probe(struct platform_device *pdev)
 	p->metadata_size = metadata_size;
 	p->pdev = pdev;
 
+	dev_dbg(&p->pdev->dev, "BOUND_ADDR: papr_scm_probe STEP1 - Requesting hypervisor bind pid=%d\n", current->pid);
 	/* request the hypervisor to bind this region to somewhere in memory */
 	rc = drc_pmem_bind(p);
 
 	/* If phyp says drc memory still bound then force unbound and retry */
-	if (rc == H_OVERLAP)
+	if (rc == H_OVERLAP) {
+		dev_dbg(&p->pdev->dev, "BOUND_ADDR: papr_scm_probe STEP1a - Overlap detected, forcing unbind and retry pid=%d\n", current->pid);
 		rc = drc_pmem_query_n_bind(p);
+	}
 
 	if (rc != H_SUCCESS) {
-		dev_err(&p->pdev->dev, "bind err: %d\n", rc);
+		dev_err(&p->pdev->dev, "BOUND_ADDR: papr_scm_probe ERROR - Bind failed: %d pid=%d\n", rc, current->pid);
 		rc = -ENXIO;
 		goto err;
 	}
 
+	dev_dbg(&p->pdev->dev, "BOUND_ADDR: papr_scm_probe STEP2 - Setting resource range bound_addr=0x%llx pid=%d\n", p->bound_addr, current->pid);
 	/* setup the resource for the newly bound range */
 	p->res.start = p->bound_addr;
 	p->res.end   = p->bound_addr + p->blocks * p->block_size - 1;
