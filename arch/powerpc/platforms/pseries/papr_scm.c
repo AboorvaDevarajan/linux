@@ -630,7 +630,7 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 			break;
 		case 1:
 			*(uint8_t *)(hdr->out_buf + data_offset) = (data[0] & 0xff);
-			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3d - Copied 1 byte: 0x%02x pid=%d\n", 
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3d - Copied 1 byte: 0x%02lx pid=%d\n", 
 				(data[0] & 0xff), current->pid);
 			break;
 		}
@@ -672,28 +672,28 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 			data = *(uint64_t *)(hdr->in_buf + data_offset);
 			data_be = cpu_to_be64(data);
 			wrote = 8;
-			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2a - Writing 8 bytes: 0x%016llx offset=%lu pid=%d\n", 
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2a - Writing 8 bytes: 0x%016lx offset=%lu pid=%d\n", 
 				data, offset, current->pid);
 		} else if (len >= 4) {
 			data = *(uint32_t *)(hdr->in_buf + data_offset);
 			data &= 0xffffffff;
 			data_be = cpu_to_be32(data);
 			wrote = 4;
-			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2b - Writing 4 bytes: 0x%08x offset=%lu pid=%d\n", 
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2b - Writing 4 bytes: 0x%08lx offset=%lu pid=%d\n", 
 				data, offset, current->pid);
 		} else if (len >= 2) {
 			data = *(uint16_t *)(hdr->in_buf + data_offset);
 			data &= 0xffff;
 			data_be = cpu_to_be16(data);
 			wrote = 2;
-			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2c - Writing 2 bytes: 0x%04x offset=%lu pid=%d\n", 
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2c - Writing 2 bytes: 0x%04lx offset=%lu pid=%d\n", 
 				data, offset, current->pid);
 		} else {
 			data_be = *(uint8_t *)(hdr->in_buf + data_offset);
 			data_be &= 0xff;
 			wrote = 1;
-			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2d - Writing 1 byte: 0x%02x offset=%lu pid=%d\n", 
-				(uint8_t)data_be, offset, current->pid);
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2d - Writing 1 byte: 0x%02lx offset=%lu pid=%d\n", 
+				(unsigned long)(uint8_t)data_be, offset, current->pid);
 		}
 
 		printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP3 - Calling hypervisor write offset=%lu wrote=%d pid=%d\n", 

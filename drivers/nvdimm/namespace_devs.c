@@ -750,14 +750,13 @@ static int __size_store(struct device *dev, unsigned long long val)
 {
 	resource_size_t allocated = 0, available = 0;
 	struct nd_region *nd_region = to_nd_region(dev->parent);
-	struct nd_namespace_common *ndns = to_nd_namespace_common(dev);
+	struct nd_namespace_common *ndns = to_ndns(dev);
 	struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
 	struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(&ndns->dev);
-	struct nd_namespace_blk *nsblk = to_nd_namespace_blk(&ndns->dev);
 	struct nd_interleave_set *nd_set = nd_region->nd_set;
 	struct nd_mapping *nd_mapping;
 	resource_size_t size = val;
-	int rc, i, id = 0;
+	int rc, i;
 	u32 flags = 0;
 
 	printk(KERN_INFO "NDCTL_CMD: __size_store ENTRY - size=%llu pid=%d\n", val, current->pid);
@@ -771,14 +770,11 @@ static int __size_store(struct device *dev, unsigned long long val)
 			flags = 0;
 		} else {
 			printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - PMEM namespace without UUID pid=%d\n", current->pid);
-			flags = NVDIMM_NAMESPACE_IO;
+			flags = ND_DRIVER_NAMESPACE_IO;
 		}
-	} else if (is_namespace_blk(dev)) {
-		printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - BLK namespace pid=%d\n", current->pid);
-		flags = NVDIMM_NAMESPACE_IO;
 	} else {
 		printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - IO namespace pid=%d\n", current->pid);
-		flags = NVDIMM_NAMESPACE_IO;
+		flags = ND_DRIVER_NAMESPACE_IO;
 	}
 
 	/* setting size zero == 'delete namespace' */
@@ -805,7 +801,7 @@ static int __size_store(struct device *dev, unsigned long long val)
 		available += nd_pmem_available_dpa(nd_region, nd_mapping);
 	}
 
-	printk(KERN_INFO "NDCTL_CMD: __size_store STEP3 - Available DPA=%llu requested=%llu pid=%d\n", 
+	printk(KERN_INFO "NDCTL_CMD: __size_store STEP3 - Available DPA=%llu requested=%llu pid=%d\n",
 		available, val, current->pid);
 
 	if (size > available) {
@@ -815,8 +811,8 @@ static int __size_store(struct device *dev, unsigned long long val)
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		nd_mapping = &nd_region->mapping[i];
-		allocated += nd_pmem_allocate_dpa(nd_region, nd_mapping,
-				&nd_set->dpa[i], size);
+		allocated += nvdimm_allocate_dpa(to_ndd(nd_mapping), &nd_set->label_id,
+				nd_mapping->start, size);
 	}
 
 	printk(KERN_INFO "NDCTL_CMD: __size_store STEP4 - Allocated DPA=%llu pid=%d\n", allocated, current->pid);
@@ -829,8 +825,6 @@ static int __size_store(struct device *dev, unsigned long long val)
 	nd_mapping = &nd_region->mapping[0];
 	if (is_namespace_pmem(dev)) {
 		rc = nd_pmem_namespace_label_update(nd_region, nspm, size);
-	} else if (is_namespace_blk(dev)) {
-		rc = nd_blk_namespace_label_update(nd_region, nsblk, size);
 	} else {
 		rc = nd_region_create_ns_seed(nd_region);
 	}
@@ -846,8 +840,6 @@ static int __size_store(struct device *dev, unsigned long long val)
 	nsio->size = size;
 	if (is_namespace_pmem(dev)) {
 		nd_namespace_pmem_set_resource(nd_region, nspm, size);
-	} else if (is_namespace_blk(dev)) {
-		nd_namespace_blk_set_resource(nd_region, nsblk, size);
 	}
 
 	printk(KERN_INFO "NDCTL_CMD: __size_store SUCCESS - Namespace size set to %llu pid=%d\n", size, current->pid);
@@ -1577,8 +1569,6 @@ static struct device **create_namespace_io(struct nd_region *nd_region)
 	res = &nsio->res;
 	res->name = dev_name(&nd_region->dev);
 	res->flags = IORESOURCE_MEM;
-	res->start = nd_region->ndr_start;
-	res->end = res->start + nd_region->ndr_size - 1;
 
 	devs[0] = dev;
 	return devs;
@@ -2121,54 +2111,16 @@ static int init_active_labels(struct nd_region *nd_region)
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		nd_mapping = &nd_region->mapping[i];
-		rc = nd_label_data_init(nd_mapping->nvdimm);
+		rc = nd_label_data_init(to_ndd(nd_mapping));
 		if (rc) {
 			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - Failed to init label data for mapping %d: %d pid=%d\n", 
 				i, rc, current->pid);
-			return rc;
-		}
-		printk(KERN_INFO "LABEL_READ: init_active_labels STEP1 - Initialized label data for mapping %d pid=%d\n", 
-			i, current->pid);
-
-		/* determine the number of slots available for labels */
-		nslot = nd_label_nslot(nd_mapping);
-		printk(KERN_INFO "LABEL_READ: init_active_labels STEP2 - Mapping %d has %u label slots pid=%d\n", 
-			i, nslot, current->pid);
-
-		/* the first slot is the 'label area' metadata */
-		slot = nd_label_alloc_slot(nd_mapping);
-		if (slot == UINT_MAX) {
-			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - No free slots for mapping %d pid=%d\n", 
-				i, current->pid);
-			return -ENXIO;
-		}
-		printk(KERN_INFO "LABEL_READ: init_active_labels STEP3 - Allocated slot %u for mapping %d pid=%d\n", 
-			slot, i, current->pid);
-
-		nd_mapping->nslot = nslot;
-		nd_mapping->slot = slot;
-
-		/* read the labels to see what has been consumed */
-		rc = init_labels(nd_mapping, slot);
-		if (rc) {
-			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - Failed to init labels for mapping %d: %d pid=%d\n", 
-				i, rc, current->pid);
-			return rc;
-		}
-		printk(KERN_INFO "LABEL_READ: init_active_labels STEP4 - Initialized labels for mapping %d pid=%d\n", 
-			i, current->pid);
-
-		/* clear free bits for invalidated labels */
-		free = nd_mapping->free;
-		for_each_clear_bit_le(slot, free, nslot) {
-			nd_label_free_slot(nd_mapping, slot);
-			printk(KERN_INFO "LABEL_READ: init_active_labels STEP5 - Freed invalid slot %u for mapping %d pid=%d\n", 
-				slot, i, current->pid);
+			continue;
 		}
 
-		active += nd_label_active_count(nd_mapping);
-		printk(KERN_INFO "LABEL_READ: init_active_labels STEP6 - Mapping %d has %d active labels pid=%d\n", 
-			i, nd_label_active_count(nd_mapping), current->pid);
+		active += nd_label_active_count(to_ndd(nd_mapping));
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP7 - Mapping %d has %d active labels pid=%d\n", 
+			i, nd_label_active_count(to_ndd(nd_mapping)), current->pid);
 	}
 
 	printk(KERN_INFO "LABEL_READ: init_active_labels SUCCESS - Total active labels=%d pid=%d\n", 
