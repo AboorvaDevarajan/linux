@@ -810,8 +810,9 @@ static int __size_store(struct device *dev, unsigned long long val)
 	}
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
+		struct nd_label_id label_id;
 		nd_mapping = &nd_region->mapping[i];
-		allocated += nvdimm_allocate_dpa(to_ndd(nd_mapping), &nd_set->label_id,
+		allocated += nvdimm_allocate_dpa(to_ndd(nd_mapping), &label_id,
 				nd_mapping->start, size);
 	}
 
@@ -826,7 +827,8 @@ static int __size_store(struct device *dev, unsigned long long val)
 	if (is_namespace_pmem(dev)) {
 		rc = nd_pmem_namespace_label_update(nd_region, nspm, size);
 	} else {
-		rc = nd_region_create_ns_seed(nd_region);
+		nd_region_create_ns_seed(nd_region);
+		rc = 0;
 	}
 
 	if (rc) {
@@ -2101,13 +2103,9 @@ static void deactivate_labels(void *region)
 static int init_active_labels(struct nd_region *nd_region)
 {
 	struct nd_mapping *nd_mapping;
-	unsigned long *free;
-	u32 nslot, slot;
 	int i, rc, active = 0;
-	struct device *dev = &nd_region->dev;
 
-	printk(KERN_INFO "LABEL_READ: init_active_labels ENTRY - region%d pid=%d\n", 
-		nd_region->id, current->pid);
+	printk(KERN_INFO "LABEL_READ: init_active_labels ENTRY pid=%d\n", current->pid);
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
 		nd_mapping = &nd_region->mapping[i];
