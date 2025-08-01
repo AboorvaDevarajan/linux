@@ -439,11 +439,18 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	int rc = 0;
 	u32 nslot;
 
-	if (ndd->data)
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init ENTRY - config_size=0x%x max_xfer=%u pid=%d\n", 
+		ndd->nsarea.config_size, ndd->nsarea.max_xfer, current->pid);
+
+	if (ndd->data) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init EXIT - Data already initialized pid=%d\n", current->pid);
 		return 0;
+	}
 
 	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0 ||
 	    ndd->nsarea.config_size == 0) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init ERROR - Invalid config area: status=%u max_xfer=%u config_size=%u pid=%d\n", 
+			ndd->nsarea.status, ndd->nsarea.max_xfer, ndd->nsarea.config_size, current->pid);
 		dev_dbg(ndd->dev, "failed to init config data area: (%u:%u)\n",
 			ndd->nsarea.max_xfer, ndd->nsarea.config_size);
 		return -ENXIO;
@@ -461,14 +468,25 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	 */
 	ndd->nslabel_size = 128;
 	read_size = sizeof_namespace_index(ndd) * 2;
-	if (!read_size)
+	if (!read_size) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init ERROR - Invalid read_size=0 pid=%d\n", current->pid);
 		return -ENXIO;
+	}
+
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP1 - nslabel_size=%u read_size=%zu pid=%d\n", 
+		ndd->nslabel_size, read_size, current->pid);
 
 	/* Allocate config data */
 	config_size = ndd->nsarea.config_size;
 	ndd->data = kvzalloc(config_size, GFP_KERNEL);
-	if (!ndd->data)
+	if (!ndd->data) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init ERROR - Failed to allocate data buffer size=%zu pid=%d\n", 
+			config_size, current->pid);
 		return -ENOMEM;
+	}
+
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP2 - Allocated data buffer size=%zu pid=%d\n", 
+		config_size, current->pid);
 
 	/*
 	 * We want to guarantee as few reads as possible while conserving
@@ -491,15 +509,27 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	read_size = min(DIV_ROUND_UP(read_size, max_xfer) * max_xfer,
 			config_size);
 
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP3 - Reading index data offset=0 size=%zu max_xfer=%zu pid=%d\n", 
+		read_size, max_xfer, current->pid);
+
 	/* Read the index data */
 	rc = nvdimm_get_config_data(ndd, ndd->data, 0, read_size);
-	if (rc)
+	if (rc) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init ERROR - Failed to read index data: %d pid=%d\n", rc, current->pid);
 		goto out_err;
+	}
+
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP4 - Validating index data pid=%d\n", current->pid);
 
 	/* Validate index data, if not valid assume all labels are invalid */
 	ndd->ns_current = nd_label_validate(ndd);
-	if (ndd->ns_current < 0)
+	if (ndd->ns_current < 0) {
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init WARNING - Index validation failed, assuming no labels pid=%d\n", current->pid);
 		return 0;
+	}
+
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP5 - Index validation successful ns_current=%d pid=%d\n", 
+		ndd->ns_current, current->pid);
 
 	/* Record our index values */
 	ndd->ns_next = nd_label_next_nsindex(ndd->ns_current);
@@ -512,19 +542,26 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 	offset = __le64_to_cpu(nsindex->labeloff);
 	nslot = __le32_to_cpu(nsindex->nslot);
 
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP6 - Processing labels offset=0x%llx nslot=%u pid=%d\n", 
+		offset, nslot, current->pid);
+
 	/* Loop through the free list pulling in any active labels */
 	for (i = 0; i < nslot; i++, offset += ndd->nslabel_size) {
 		size_t label_read_size;
 
 		/* zero out the unused labels */
 		if (test_bit_le(i, nsindex->free)) {
+			printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP7a - Zeroing unused label slot=%u pid=%d\n", i, current->pid);
 			memset(ndd->data + offset, 0, ndd->nslabel_size);
 			continue;
 		}
 
 		/* if we already read past here then just continue */
-		if (offset + ndd->nslabel_size <= read_size)
+		if (offset + ndd->nslabel_size <= read_size) {
+			printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP7b - Label already read slot=%u offset=0x%llx pid=%d\n", 
+				i, offset, current->pid);
 			continue;
+		}
 
 		/* if we haven't read in a while reset our read_size offset */
 		if (read_size < offset)
@@ -539,17 +576,24 @@ int nd_label_data_init(struct nvdimm_drvdata *ndd)
 		if (read_size + label_read_size > config_size)
 			label_read_size = config_size - read_size;
 
+		printk(KERN_INFO "LABEL_READ: nd_label_data_init STEP7c - Reading label slot=%u offset=0x%llx read_size=%zu label_read_size=%zu pid=%d\n", 
+			i, offset, read_size, label_read_size, current->pid);
+
 		/* Read the label data */
 		rc = nvdimm_get_config_data(ndd, ndd->data + read_size,
 					    read_size, label_read_size);
-		if (rc)
+		if (rc) {
+			printk(KERN_INFO "LABEL_READ: nd_label_data_init ERROR - Failed to read label data slot=%u: %d pid=%d\n", i, rc, current->pid);
 			goto out_err;
+		}
 
 		/* push read_size to next read offset */
 		read_size += label_read_size;
 	}
 
-	dev_dbg(ndd->dev, "len: %zu rc: %d\n", offset, rc);
+	printk(KERN_INFO "LABEL_READ: nd_label_data_init SUCCESS - Total offset=0x%llx rc=%d pid=%d\n", 
+		offset, rc, current->pid);
+
 out_err:
 	return rc;
 }

@@ -89,16 +89,29 @@ int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
 	struct nd_cmd_get_config_data_hdr *cmd;
 	size_t max_cmd_size, buf_offset;
 
-	if (rc)
-		return rc;
+	printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ENTRY - offset=0x%zx len=%zu pid=%d\n", 
+		offset, len, current->pid);
 
-	if (offset + len > ndd->nsarea.config_size)
+	if (rc) {
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - validate_dimm failed: %d pid=%d\n", rc, current->pid);
+		return rc;
+	}
+
+	if (offset + len > ndd->nsarea.config_size) {
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - offset+len exceeds config_size: 0x%zx+%zu > 0x%x pid=%d\n", 
+			offset, len, ndd->nsarea.config_size, current->pid);
 		return -ENXIO;
+	}
 
 	max_cmd_size = min_t(u32, len, ndd->nsarea.max_xfer);
+	printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data STEP1 - max_cmd_size=%zu config_size=0x%x max_xfer=%u pid=%d\n", 
+		max_cmd_size, ndd->nsarea.config_size, ndd->nsarea.max_xfer, current->pid);
+
 	cmd = kvzalloc(max_cmd_size + sizeof(*cmd), GFP_KERNEL);
-	if (!cmd)
+	if (!cmd) {
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - Failed to allocate cmd buffer pid=%d\n", current->pid);
 		return -ENOMEM;
+	}
 
 	for (buf_offset = 0; len;
 	     len -= cmd->in_length, buf_offset += cmd->in_length) {
@@ -109,19 +122,35 @@ int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
 
 		cmd_size = sizeof(*cmd) + cmd->in_length;
 
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data STEP2 - Reading config data offset=0x%x length=%u pid=%d\n", 
+			cmd->in_offset, cmd->in_length, current->pid);
+
 		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev),
 				ND_CMD_GET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
-		if (rc < 0)
+		if (rc < 0) {
+			printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - ndctl failed: %d pid=%d\n", rc, current->pid);
 			break;
+		}
 		if (cmd_rc < 0) {
+			printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - cmd_rc failed: %d pid=%d\n", cmd_rc, current->pid);
 			rc = cmd_rc;
 			break;
 		}
+
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data STEP3 - Copying data to buffer offset=0x%zx pid=%d\n", 
+			buf_offset, current->pid);
 
 		/* out_buf should be valid, copy it into our output buffer */
 		memcpy(buf + buf_offset, cmd->out_buf, cmd->in_length);
 	}
 	kvfree(cmd);
+
+	if (rc >= 0) {
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data SUCCESS - total_read=%zu pid=%d\n", 
+			buf_offset, current->pid);
+	} else {
+		printk(KERN_INFO "LABEL_READ: nvdimm_get_config_data ERROR - final_rc=%d pid=%d\n", rc, current->pid);
+	}
 
 	return rc;
 }

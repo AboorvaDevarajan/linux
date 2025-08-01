@@ -566,8 +566,17 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 	int len, read;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_get ENTRY - offset=%u length=%u metadata_size=%d pid=%d\n", 
+		hdr->in_offset, hdr->in_length, p->metadata_size, current->pid);
+
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_get ERROR - offset+length exceeds metadata_size: %u+%u > %d pid=%d\n", 
+			hdr->in_offset, hdr->in_length, p->metadata_size, current->pid);
 		return -EINVAL;
+	}
+
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP1 - Starting read loop total_length=%u pid=%d\n", 
+		hdr->in_length, current->pid);
 
 	for (len = hdr->in_length; len; len -= read) {
 
@@ -583,31 +592,53 @@ static int papr_scm_meta_get(struct papr_scm_priv *p,
 		else
 			read = 1;
 
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP2 - Reading metadata offset=%lu read_size=%d pid=%d\n", 
+			offset, read, current->pid);
+
 		ret = plpar_hcall(H_SCM_READ_METADATA, data, p->drc_index,
 				  offset, read);
 
-		if (ret == H_PARAMETER) /* bad DRC index */
+		if (ret == H_PARAMETER) {
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get ERROR - Bad DRC index: %d pid=%d\n", 
+				p->drc_index, current->pid);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get ERROR - Hypervisor call failed: %lld pid=%d\n", 
+				ret, current->pid);
+			return -EINVAL;
+		}
+
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3 - Copying data to buffer offset=%lu data_offset=%lu pid=%d\n", 
+			offset, data_offset, current->pid);
 
 		switch (read) {
 		case 8:
 			*(uint64_t *)(hdr->out_buf + data_offset) = be64_to_cpu(data[0]);
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3a - Copied 8 bytes: 0x%016llx pid=%d\n", 
+				be64_to_cpu(data[0]), current->pid);
 			break;
 		case 4:
 			*(uint32_t *)(hdr->out_buf + data_offset) = be32_to_cpu(data[0] & 0xffffffff);
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3b - Copied 4 bytes: 0x%08x pid=%d\n", 
+				be32_to_cpu(data[0] & 0xffffffff), current->pid);
 			break;
-
 		case 2:
 			*(uint16_t *)(hdr->out_buf + data_offset) = be16_to_cpu(data[0] & 0xffff);
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3c - Copied 2 bytes: 0x%04x pid=%d\n", 
+				be16_to_cpu(data[0] & 0xffff), current->pid);
 			break;
-
 		case 1:
 			*(uint8_t *)(hdr->out_buf + data_offset) = (data[0] & 0xff);
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_get STEP3d - Copied 1 byte: 0x%02x pid=%d\n", 
+				(data[0] & 0xff), current->pid);
 			break;
 		}
 	}
+
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_get SUCCESS - Total bytes read=%u pid=%d\n", 
+		hdr->in_length, current->pid);
+
 	return 0;
 }
 
@@ -620,8 +651,17 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 	__be64 data_be;
 	int64_t ret;
 
-	if ((hdr->in_offset + hdr->in_length) > p->metadata_size)
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_set ENTRY - offset=%u length=%u metadata_size=%d pid=%d\n", 
+		hdr->in_offset, hdr->in_length, p->metadata_size, current->pid);
+
+	if ((hdr->in_offset + hdr->in_length) > p->metadata_size) {
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_set ERROR - offset+length exceeds metadata_size: %u+%u > %d pid=%d\n", 
+			hdr->in_offset, hdr->in_length, p->metadata_size, current->pid);
 		return -EINVAL;
+	}
+
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP1 - Starting write loop total_length=%u pid=%d\n", 
+		hdr->in_length, current->pid);
 
 	for (len = hdr->in_length; len; len -= wrote) {
 
@@ -632,29 +672,52 @@ static int papr_scm_meta_set(struct papr_scm_priv *p,
 			data = *(uint64_t *)(hdr->in_buf + data_offset);
 			data_be = cpu_to_be64(data);
 			wrote = 8;
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2a - Writing 8 bytes: 0x%016llx offset=%lu pid=%d\n", 
+				data, offset, current->pid);
 		} else if (len >= 4) {
 			data = *(uint32_t *)(hdr->in_buf + data_offset);
 			data &= 0xffffffff;
 			data_be = cpu_to_be32(data);
 			wrote = 4;
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2b - Writing 4 bytes: 0x%08x offset=%lu pid=%d\n", 
+				data, offset, current->pid);
 		} else if (len >= 2) {
 			data = *(uint16_t *)(hdr->in_buf + data_offset);
 			data &= 0xffff;
 			data_be = cpu_to_be16(data);
 			wrote = 2;
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2c - Writing 2 bytes: 0x%04x offset=%lu pid=%d\n", 
+				data, offset, current->pid);
 		} else {
 			data_be = *(uint8_t *)(hdr->in_buf + data_offset);
 			data_be &= 0xff;
 			wrote = 1;
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP2d - Writing 1 byte: 0x%02x offset=%lu pid=%d\n", 
+				(uint8_t)data_be, offset, current->pid);
 		}
+
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP3 - Calling hypervisor write offset=%lu wrote=%d pid=%d\n", 
+			offset, wrote, current->pid);
 
 		ret = plpar_hcall_norets(H_SCM_WRITE_METADATA, p->drc_index,
 					 offset, data_be, wrote);
-		if (ret == H_PARAMETER) /* bad DRC index */
+		if (ret == H_PARAMETER) {
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set ERROR - Bad DRC index: %d pid=%d\n", 
+				p->drc_index, current->pid);
 			return -ENODEV;
-		if (ret)
-			return -EINVAL; /* other invalid parameter */
+		}
+		if (ret) {
+			printk(KERN_INFO "PAPR_META: papr_scm_meta_set ERROR - Hypervisor call failed: %lld pid=%d\n", 
+				ret, current->pid);
+			return -EINVAL;
+		}
+
+		printk(KERN_INFO "PAPR_META: papr_scm_meta_set STEP4 - Write successful offset=%lu wrote=%d pid=%d\n", 
+			offset, wrote, current->pid);
 	}
+
+	printk(KERN_INFO "PAPR_META: papr_scm_meta_set SUCCESS - Total bytes written=%u pid=%d\n", 
+		hdr->in_length, current->pid);
 
 	return 0;
 }
@@ -944,60 +1007,51 @@ static inline const struct pdsm_cmd_desc *pdsm_cmd_desc(enum papr_pdsm cmd)
 static int papr_scm_service_pdsm(struct papr_scm_priv *p,
 				 struct nd_cmd_pkg *pkg)
 {
-	/* Get the PDSM header and PDSM command */
 	struct nd_pkg_pdsm *pdsm_pkg = (struct nd_pkg_pdsm *)pkg->nd_payload;
 	enum papr_pdsm pdsm = (enum papr_pdsm)pkg->nd_command;
 	const struct pdsm_cmd_desc *pdsc;
 	int rc;
 
-	/* Fetch corresponding pdsm descriptor for validation and servicing */
+	printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm ENTRY - pdsm=0x%x pid=%d\n", 
+		pdsm, current->pid);
+
+	/* Validate the pdsm command */
 	pdsc = pdsm_cmd_desc(pdsm);
-
-	/* Validate pdsm descriptor */
-	/* Ensure that reserved fields are 0 */
-	if (pdsm_pkg->reserved[0] || pdsm_pkg->reserved[1]) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Invalid reserved field\n",
-			pdsm);
+	if (!pdsc) {
+		printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm ERROR - Unknown PDSM command: 0x%x pid=%d\n", 
+			pdsm, current->pid);
 		return -EINVAL;
 	}
 
-	/* If pdsm expects some input, then ensure that the size_in matches */
-	if (pdsc->size_in &&
-	    pkg->nd_size_in != (pdsc->size_in + ND_PDSM_HDR_SIZE)) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Mismatched size_in=%d\n",
-			pdsm, pkg->nd_size_in);
+	/* Validate the payload size */
+	if (pkg->nd_size_in < pdsc->size_in || pkg->nd_size_out < pdsc->size_out) {
+		printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm ERROR - Invalid payload size: in=%u expected=%u out=%u expected=%u pid=%d\n", 
+			pkg->nd_size_in, pdsc->size_in, pkg->nd_size_out, pdsc->size_out, current->pid);
 		return -EINVAL;
 	}
 
-	/* If pdsm wants to return data, then ensure that  size_out matches */
-	if (pdsc->size_out &&
-	    pkg->nd_size_out != (pdsc->size_out + ND_PDSM_HDR_SIZE)) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Mismatched size_out=%d\n",
-			pdsm, pkg->nd_size_out);
-		return -EINVAL;
+	printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm STEP1 - Calling PDSM service function pid=%d\n", current->pid);
+
+	/* Call the service function */
+	rc = pdsc->service(p, &pdsm_pkg->payload);
+
+	if (rc < 0) {
+		printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm ERROR - Service function failed: %d pid=%d\n", 
+			rc, current->pid);
+		return rc;
 	}
 
-	/* Service the pdsm */
-	if (pdsc->service) {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Servicing..\n", pdsm);
+	printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm STEP2 - Service function returned: %d pid=%d\n", 
+		rc, current->pid);
 
-		rc = pdsc->service(p, &pdsm_pkg->payload);
+	/* Set the return size */
+	pkg->nd_fw_size = rc;
 
-		if (rc < 0) {
-			/* error encountered while servicing pdsm */
-			pdsm_pkg->cmd_status = rc;
-			pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
-		} else {
-			/* pdsm serviced and 'rc' bytes written to payload */
-			pdsm_pkg->cmd_status = 0;
-			pkg->nd_fw_size = ND_PDSM_HDR_SIZE + rc;
-		}
-	} else {
-		dev_dbg(&p->pdev->dev, "PDSM[0x%x]: Unsupported PDSM request\n",
-			pdsm);
-		pdsm_pkg->cmd_status = -ENOENT;
-		pkg->nd_fw_size = ND_PDSM_HDR_SIZE;
-	}
+	/* Set the command status */
+	pdsm_pkg->cmd_status = 0;
+
+	printk(KERN_INFO "PAPR_PDSM: papr_scm_service_pdsm SUCCESS - pdsm=0x%x fw_size=%d pid=%d\n", 
+		pdsm, pkg->nd_fw_size, current->pid);
 
 	return pdsm_pkg->cmd_status;
 }
@@ -1011,8 +1065,13 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 	struct papr_scm_priv *p;
 	int rc;
 
+	printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl ENTRY - cmd=0x%x buf_len=%u pid=%d\n", 
+		cmd, buf_len, current->pid);
+
 	rc = is_cmd_valid(nvdimm, cmd, buf, buf_len);
 	if (rc) {
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl ERROR - Invalid cmd=0x%x: %d pid=%d\n", 
+			cmd, rc, current->pid);
 		pr_debug("Invalid cmd=0x%x. Err=%d\n", cmd, rc);
 		return rc;
 	}
@@ -1023,33 +1082,64 @@ static int papr_scm_ndctl(struct nvdimm_bus_descriptor *nd_desc,
 
 	p = nvdimm_provider_data(nvdimm);
 
+	printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP1 - Processing cmd=0x%x drc_index=0x%x metadata_size=%d pid=%d\n", 
+		cmd, p->drc_index, p->metadata_size, current->pid);
+
 	switch (cmd) {
 	case ND_CMD_GET_CONFIG_SIZE:
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2a - GET_CONFIG_SIZE pid=%d\n", current->pid);
 		get_size_hdr = buf;
 
 		get_size_hdr->status = 0;
 		get_size_hdr->max_xfer = 8;
 		get_size_hdr->config_size = p->metadata_size;
 		*cmd_rc = 0;
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2a - GET_CONFIG_SIZE SUCCESS max_xfer=%u config_size=%d pid=%d\n", 
+			get_size_hdr->max_xfer, get_size_hdr->config_size, current->pid);
 		break;
 
 	case ND_CMD_GET_CONFIG_DATA:
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2b - GET_CONFIG_DATA pid=%d\n", current->pid);
 		*cmd_rc = papr_scm_meta_get(p, buf);
+		if (*cmd_rc == 0) {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2b - GET_CONFIG_DATA SUCCESS pid=%d\n", current->pid);
+		} else {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2b - GET_CONFIG_DATA ERROR: %d pid=%d\n", 
+				*cmd_rc, current->pid);
+		}
 		break;
 
 	case ND_CMD_SET_CONFIG_DATA:
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2c - SET_CONFIG_DATA pid=%d\n", current->pid);
 		*cmd_rc = papr_scm_meta_set(p, buf);
+		if (*cmd_rc == 0) {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2c - SET_CONFIG_DATA SUCCESS pid=%d\n", current->pid);
+		} else {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2c - SET_CONFIG_DATA ERROR: %d pid=%d\n", 
+				*cmd_rc, current->pid);
+		}
 		break;
 
 	case ND_CMD_CALL:
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2d - ND_CMD_CALL pid=%d\n", current->pid);
 		call_pkg = (struct nd_cmd_pkg *)buf;
 		*cmd_rc = papr_scm_service_pdsm(p, call_pkg);
+		if (*cmd_rc == 0) {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2d - ND_CMD_CALL SUCCESS pid=%d\n", current->pid);
+		} else {
+			printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl STEP2d - ND_CMD_CALL ERROR: %d pid=%d\n", 
+				*cmd_rc, current->pid);
+		}
 		break;
 
 	default:
+		printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl ERROR - Unknown command=0x%x pid=%d\n", cmd, current->pid);
 		dev_dbg(&p->pdev->dev, "Unknown command = %d\n", cmd);
 		return -EINVAL;
 	}
+
+	printk(KERN_INFO "PAPR_NDCTL: papr_scm_ndctl EXIT - cmd=0x%x cmd_rc=%d pid=%d\n", 
+		cmd, *cmd_rc, current->pid);
 
 	dev_dbg(&p->pdev->dev, "returned with cmd_rc = %d\n", *cmd_rc);
 

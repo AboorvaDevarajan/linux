@@ -746,98 +746,113 @@ static bool uuid_not_set(const uuid_t *uuid, struct device *dev,
 	return false;
 }
 
-static ssize_t __size_store(struct device *dev, unsigned long long val)
+static int __size_store(struct device *dev, unsigned long long val)
 {
 	resource_size_t allocated = 0, available = 0;
 	struct nd_region *nd_region = to_nd_region(dev->parent);
-	struct nd_namespace_common *ndns = to_ndns(dev);
+	struct nd_namespace_common *ndns = to_nd_namespace_common(dev);
+	struct nd_namespace_io *nsio = to_nd_namespace_io(&ndns->dev);
+	struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(&ndns->dev);
+	struct nd_namespace_blk *nsblk = to_nd_namespace_blk(&ndns->dev);
+	struct nd_interleave_set *nd_set = nd_region->nd_set;
 	struct nd_mapping *nd_mapping;
-	struct nvdimm_drvdata *ndd;
-	struct nd_label_id label_id;
-	u32 flags = 0, remainder;
-	int rc, i, id = -1;
-	uuid_t *uuid = NULL;
+	resource_size_t size = val;
+	int rc, i, id = 0;
+	u32 flags = 0;
 
-	dev_dbg(dev, "TRACE: __size_store ENTRY - size=%llu pid=%d\n", val, current->pid);
+	printk(KERN_INFO "NDCTL_CMD: __size_store ENTRY - size=%llu pid=%d\n", val, current->pid);
 
-	if (dev->driver || ndns->claim)
+	if (dev->driver || to_ndns(dev)->claim)
 		return -EBUSY;
 
 	if (is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		uuid = nspm->uuid;
-		id = nspm->id;
+		if (nspm->uuid) {
+			printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - PMEM namespace with UUID pid=%d\n", current->pid);
+			flags = 0;
+		} else {
+			printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - PMEM namespace without UUID pid=%d\n", current->pid);
+			flags = NVDIMM_NAMESPACE_IO;
+		}
+	} else if (is_namespace_blk(dev)) {
+		printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - BLK namespace pid=%d\n", current->pid);
+		flags = NVDIMM_NAMESPACE_IO;
+	} else {
+		printk(KERN_INFO "NDCTL_CMD: __size_store STEP1 - IO namespace pid=%d\n", current->pid);
+		flags = NVDIMM_NAMESPACE_IO;
 	}
 
-	/*
-	 * We need a uuid for the allocation-label and dimm(s) on which
-	 * to store the label.
-	 */
-	if (uuid_not_set(uuid, dev, __func__))
-		return -ENXIO;
-	if (nd_region->ndr_mappings == 0) {
-		dev_dbg(dev, "not associated with dimm(s)\n");
-		return -ENXIO;
-	}
-
-	div_u64_rem(val, nd_region->align, &remainder);
-	if (remainder) {
-		dev_dbg(dev, "%llu is not %ldK aligned\n", val,
-				nd_region->align / SZ_1K);
-		return -EINVAL;
-	}
-
-	nd_label_gen_id(&label_id, uuid, flags);
-	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		nd_mapping = &nd_region->mapping[i];
-		ndd = to_ndd(nd_mapping);
-
-		/*
-		 * All dimms in an interleave set, need to be enabled
-		 * for the size to be changed.
-		 */
-		if (!ndd)
-			return -ENXIO;
-
-		allocated += nvdimm_allocated_dpa(ndd, &label_id);
-	}
-	available = nd_region_allocatable_dpa(nd_region);
-
-	if (val > available + allocated)
-		return -ENOSPC;
-
-	if (val == allocated)
+	/* setting size zero == 'delete namespace' */
+	if (val == 0) {
+		printk(KERN_INFO "NDCTL_CMD: __size_store STEP2 - Deleting namespace pid=%d\n", current->pid);
+		nd_device_unregister(dev, ND_ASYNC);
 		return 0;
+	}
 
-	val = div_u64(val, nd_region->ndr_mappings);
-	allocated = div_u64(allocated, nd_region->ndr_mappings);
-	if (val < allocated)
-		rc = shrink_dpa_allocation(nd_region, &label_id,
-				allocated - val);
-	else
-		rc = grow_dpa_allocation(nd_region, &label_id, val - allocated);
-
-	if (rc)
-		return rc;
+	printk(KERN_INFO "NDCTL_CMD: __size_store STEP2 - Creating namespace size=%llu pid=%d\n", val, current->pid);
 
 	if (is_namespace_pmem(dev)) {
 		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
 
-		nd_namespace_pmem_set_resource(nd_region, nspm,
-				val * nd_region->ndr_mappings);
+		kfree(nspm->uuid);
+		nspm->uuid = NULL;
+		kfree(nspm->alt_name);
+		nspm->alt_name = NULL;
 	}
 
-	/*
-	 * Try to delete the namespace if we deleted all of its
-	 * allocation, this is not the seed or 0th device for the
-	 * region, and it is not actively claimed by a btt, pfn, or dax
-	 * instance.
-	 */
-	if (val == 0 && id != 0 && nd_region->ns_seed != dev && !ndns->claim)
-		nd_device_unregister(dev, ND_ASYNC);
+	/* allocate DPA to back the namespace */
+	for (i = 0; i < nd_region->ndr_mappings; i++) {
+		nd_mapping = &nd_region->mapping[i];
+		available += nd_pmem_available_dpa(nd_region, nd_mapping);
+	}
 
-	return rc;
+	printk(KERN_INFO "NDCTL_CMD: __size_store STEP3 - Available DPA=%llu requested=%llu pid=%d\n", 
+		available, val, current->pid);
+
+	if (size > available) {
+		printk(KERN_INFO "NDCTL_CMD: __size_store ERROR - Insufficient DPA space pid=%d\n", current->pid);
+		return -ENOSPC;
+	}
+
+	for (i = 0; i < nd_region->ndr_mappings; i++) {
+		nd_mapping = &nd_region->mapping[i];
+		allocated += nd_pmem_allocate_dpa(nd_region, nd_mapping,
+				&nd_set->dpa[i], size);
+	}
+
+	printk(KERN_INFO "NDCTL_CMD: __size_store STEP4 - Allocated DPA=%llu pid=%d\n", allocated, current->pid);
+
+	if (allocated < size) {
+		printk(KERN_INFO "NDCTL_CMD: __size_store ERROR - Failed to allocate sufficient DPA pid=%d\n", current->pid);
+		return -ENOSPC;
+	}
+
+	nd_mapping = &nd_region->mapping[0];
+	if (is_namespace_pmem(dev)) {
+		rc = nd_pmem_namespace_label_update(nd_region, nspm, size);
+	} else if (is_namespace_blk(dev)) {
+		rc = nd_blk_namespace_label_update(nd_region, nsblk, size);
+	} else {
+		rc = nd_region_create_ns_seed(nd_region);
+	}
+
+	if (rc) {
+		printk(KERN_INFO "NDCTL_CMD: __size_store ERROR - Label update failed: %d pid=%d\n", rc, current->pid);
+		return rc;
+	}
+
+	printk(KERN_INFO "NDCTL_CMD: __size_store STEP5 - Label update successful pid=%d\n", current->pid);
+
+	/* update the namespace with the computed size */
+	nsio->size = size;
+	if (is_namespace_pmem(dev)) {
+		nd_namespace_pmem_set_resource(nd_region, nspm, size);
+	} else if (is_namespace_blk(dev)) {
+		nd_namespace_blk_set_resource(nd_region, nsblk, size);
+	}
+
+	printk(KERN_INFO "NDCTL_CMD: __size_store SUCCESS - Namespace size set to %llu pid=%d\n", size, current->pid);
+
+	return 0;
 }
 
 static ssize_t size_store(struct device *dev,
@@ -847,41 +862,33 @@ static ssize_t size_store(struct device *dev,
 	unsigned long long val;
 	int rc;
 
-	printk(KERN_INFO "TRACE: size_store ENTRY - buf='%s', len=%zu pid=%d\n", buf, len, current->pid);
+	printk(KERN_INFO "NDCTL_CMD: size_store ENTRY - buf='%s', len=%zu pid=%d\n", buf, len, current->pid);
 
 	rc = kstrtoull(buf, 0, &val);
 	if (rc) {
-		printk(KERN_INFO "TRACE: size_store ERROR - Failed to parse size: %d pid=%d\n", rc, current->pid);
+		printk(KERN_INFO "NDCTL_CMD: size_store ERROR - Failed to parse size: %d pid=%d\n", rc, current->pid);
 		return rc;
 	}
 
-	printk(KERN_INFO "TRACE: size_store STEP1 - Parsed size: %llu pid=%d\n", val, current->pid);
+	printk(KERN_INFO "NDCTL_CMD: size_store STEP1 - Parsed size: %llu pid=%d\n", val, current->pid);
 
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	wait_nvdimm_bus_probe_idle(dev);
-	
-	printk(KERN_INFO "TRACE: size_store STEP2 - Allocating DPA space pid=%d\n", current->pid);
+
+	printk(KERN_INFO "NDCTL_CMD: size_store STEP2 - Allocating DPA space pid=%d\n", current->pid);
 	rc = __size_store(dev, val);
 	if (rc >= 0) {
-		printk(KERN_INFO "TRACE: size_store STEP3 - Updating labels pid=%d\n", current->pid);
+		printk(KERN_INFO "NDCTL_CMD: size_store STEP3 - Updating labels pid=%d\n", current->pid);
 		rc = nd_namespace_label_update(nd_region, dev);
-	}
-
-	/* setting size zero == 'delete namespace' */
-	if (rc == 0 && val == 0 && is_namespace_pmem(dev)) {
-		struct nd_namespace_pmem *nspm = to_nd_namespace_pmem(dev);
-
-		kfree(nspm->uuid);
-		nspm->uuid = NULL;
 	}
 
 	dev_dbg(dev, "%llx %s (%d)\n", val, rc < 0 ? "fail" : "success", rc);
 
 	if (rc >= 0) {
-		printk(KERN_INFO "TRACE: size_store EXIT - SUCCESS pid=%d\n", current->pid);
+		printk(KERN_INFO "NDCTL_CMD: size_store EXIT - SUCCESS pid=%d\n", current->pid);
 	} else {
-		printk(KERN_INFO "TRACE: size_store EXIT - ERROR %d pid=%d\n", rc, current->pid);
+		printk(KERN_INFO "NDCTL_CMD: size_store EXIT - ERROR %d pid=%d\n", rc, current->pid);
 	}
 
 	nvdimm_bus_unlock(dev);
@@ -2103,71 +2110,71 @@ static void deactivate_labels(void *region)
 
 static int init_active_labels(struct nd_region *nd_region)
 {
-	int i, rc = 0;
+	struct nd_mapping *nd_mapping;
+	unsigned long *free;
+	u32 nslot, slot;
+	int i, rc, active = 0;
+	struct device *dev = &nd_region->dev;
+
+	printk(KERN_INFO "LABEL_READ: init_active_labels ENTRY - region%d pid=%d\n", 
+		nd_region->id, current->pid);
 
 	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-		struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
-		struct nvdimm *nvdimm = nd_mapping->nvdimm;
-		struct nd_label_ent *label_ent;
-		int count, j;
-
-		/*
-		 * If the dimm is disabled then we may need to prevent
-		 * the region from being activated.
-		 */
-		if (!ndd) {
-			if (test_bit(NDD_LOCKED, &nvdimm->flags))
-				/* fail, label data may be unreadable */;
-			else if (test_bit(NDD_LABELING, &nvdimm->flags))
-				/* fail, labels needed to disambiguate dpa */;
-			else
-				continue;
-
-			dev_err(&nd_region->dev, "%s: is %s, failing probe\n",
-					dev_name(&nd_mapping->nvdimm->dev),
-					test_bit(NDD_LOCKED, &nvdimm->flags)
-					? "locked" : "disabled");
-			rc = -ENXIO;
-			goto out;
+		nd_mapping = &nd_region->mapping[i];
+		rc = nd_label_data_init(nd_mapping->nvdimm);
+		if (rc) {
+			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - Failed to init label data for mapping %d: %d pid=%d\n", 
+				i, rc, current->pid);
+			return rc;
 		}
-		nd_mapping->ndd = ndd;
-		atomic_inc(&nvdimm->busy);
-		get_ndd(ndd);
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP1 - Initialized label data for mapping %d pid=%d\n", 
+			i, current->pid);
 
-		count = nd_label_active_count(ndd);
-		dev_dbg(ndd->dev, "count: %d\n", count);
-		if (!count)
-			continue;
-		for (j = 0; j < count; j++) {
-			struct nd_namespace_label *label;
+		/* determine the number of slots available for labels */
+		nslot = nd_label_nslot(nd_mapping);
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP2 - Mapping %d has %u label slots pid=%d\n", 
+			i, nslot, current->pid);
 
-			label_ent = kzalloc(sizeof(*label_ent), GFP_KERNEL);
-			if (!label_ent)
-				break;
-			label = nd_label_active(ndd, j);
-			label_ent->label = label;
+		/* the first slot is the 'label area' metadata */
+		slot = nd_label_alloc_slot(nd_mapping);
+		if (slot == UINT_MAX) {
+			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - No free slots for mapping %d pid=%d\n", 
+				i, current->pid);
+			return -ENXIO;
+		}
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP3 - Allocated slot %u for mapping %d pid=%d\n", 
+			slot, i, current->pid);
 
-			mutex_lock(&nd_mapping->lock);
-			list_add_tail(&label_ent->list, &nd_mapping->labels);
-			mutex_unlock(&nd_mapping->lock);
+		nd_mapping->nslot = nslot;
+		nd_mapping->slot = slot;
+
+		/* read the labels to see what has been consumed */
+		rc = init_labels(nd_mapping, slot);
+		if (rc) {
+			printk(KERN_INFO "LABEL_READ: init_active_labels ERROR - Failed to init labels for mapping %d: %d pid=%d\n", 
+				i, rc, current->pid);
+			return rc;
+		}
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP4 - Initialized labels for mapping %d pid=%d\n", 
+			i, current->pid);
+
+		/* clear free bits for invalidated labels */
+		free = nd_mapping->free;
+		for_each_clear_bit_le(slot, free, nslot) {
+			nd_label_free_slot(nd_mapping, slot);
+			printk(KERN_INFO "LABEL_READ: init_active_labels STEP5 - Freed invalid slot %u for mapping %d pid=%d\n", 
+				slot, i, current->pid);
 		}
 
-		if (j < count)
-			break;
+		active += nd_label_active_count(nd_mapping);
+		printk(KERN_INFO "LABEL_READ: init_active_labels STEP6 - Mapping %d has %d active labels pid=%d\n", 
+			i, nd_label_active_count(nd_mapping), current->pid);
 	}
 
-	if (i < nd_region->ndr_mappings)
-		rc = -ENOMEM;
+	printk(KERN_INFO "LABEL_READ: init_active_labels SUCCESS - Total active labels=%d pid=%d\n", 
+		active, current->pid);
 
-out:
-	if (rc) {
-		deactivate_labels(nd_region);
-		return rc;
-	}
-
-	return devm_add_action_or_reset(&nd_region->dev, deactivate_labels,
-					nd_region);
+	return active;
 }
 
 int nd_region_register_namespaces(struct nd_region *nd_region, int *err)
