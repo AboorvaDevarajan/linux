@@ -1041,6 +1041,8 @@ static int __nd_ioctl(struct nvdimm_bus *nvdimm_bus, struct nvdimm *nvdimm,
 	void *buf = NULL;
 	u64 buf_len = 0;
 
+	dev_dbg(dev, "IOCTL_ND: __nd_ioctl ENTRY - cmd=0x%x pid=%d\n", cmd, current->pid);
+
 	if (nvdimm) {
 		desc = nd_cmd_dimm_desc(cmd);
 		cmd_name = nvdimm_cmd_name(cmd);
@@ -1183,9 +1185,13 @@ static int __nd_ioctl(struct nvdimm_bus *nvdimm_bus, struct nvdimm *nvdimm,
 	if (rc)
 		goto out_unlock;
 
+	dev_dbg(dev, "IOCTL_ND: __nd_ioctl STEP1 - Calling ndctl provider pid=%d\n", current->pid);
 	rc = nd_desc->ndctl(nd_desc, nvdimm, cmd, buf, buf_len, &cmd_rc);
-	if (rc < 0)
+	if (rc < 0) {
+		dev_err(dev, "IOCTL_ND: __nd_ioctl ERROR - ndctl failed: %d pid=%d\n", rc, current->pid);
 		goto out_unlock;
+	}
+	dev_dbg(dev, "IOCTL_ND: __nd_ioctl SUCCESS - cmd_rc=%d pid=%d\n", cmd_rc, current->pid);
 
 	if (!nvdimm && cmd == ND_CMD_CLEAR_ERROR && cmd_rc >= 0) {
 		struct nd_cmd_clear_error *clear_err = buf;

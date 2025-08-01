@@ -758,6 +758,8 @@ static ssize_t __size_store(struct device *dev, unsigned long long val)
 	int rc, i, id = -1;
 	uuid_t *uuid = NULL;
 
+	dev_dbg(dev, "TRACE: __size_store ENTRY - size=%llu pid=%d\n", val, current->pid);
+
 	if (dev->driver || ndns->claim)
 		return -EBUSY;
 
@@ -845,16 +847,26 @@ static ssize_t size_store(struct device *dev,
 	unsigned long long val;
 	int rc;
 
+	dev_dbg(dev, "TRACE: size_store ENTRY - buf='%s', len=%zu pid=%d\n", buf, len, current->pid);
+
 	rc = kstrtoull(buf, 0, &val);
-	if (rc)
+	if (rc) {
+		dev_err(dev, "TRACE: size_store ERROR - Failed to parse size: %d pid=%d\n", rc, current->pid);
 		return rc;
+	}
+
+	dev_dbg(dev, "TRACE: size_store STEP1 - Parsed size: %llu pid=%d\n", val, current->pid);
 
 	device_lock(dev);
 	nvdimm_bus_lock(dev);
 	wait_nvdimm_bus_probe_idle(dev);
+	
+	dev_dbg(dev, "TRACE: size_store STEP2 - Allocating DPA space pid=%d\n", current->pid);
 	rc = __size_store(dev, val);
-	if (rc >= 0)
+	if (rc >= 0) {
+		dev_dbg(dev, "TRACE: size_store STEP3 - Updating labels pid=%d\n", current->pid);
 		rc = nd_namespace_label_update(nd_region, dev);
+	}
 
 	/* setting size zero == 'delete namespace' */
 	if (rc == 0 && val == 0 && is_namespace_pmem(dev)) {
@@ -865,6 +877,12 @@ static ssize_t size_store(struct device *dev,
 	}
 
 	dev_dbg(dev, "%llx %s (%d)\n", val, rc < 0 ? "fail" : "success", rc);
+
+	if (rc >= 0) {
+		dev_dbg(dev, "TRACE: size_store EXIT - SUCCESS pid=%d\n", current->pid);
+	} else {
+		dev_err(dev, "TRACE: size_store EXIT - ERROR %d pid=%d\n", rc, current->pid);
+	}
 
 	nvdimm_bus_unlock(dev);
 	device_unlock(dev);
@@ -2157,29 +2175,41 @@ int nd_region_register_namespaces(struct nd_region *nd_region, int *err)
 	struct device **devs = NULL;
 	int i, rc = 0, type;
 
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces ENTRY pid=%d\n", current->pid);
+
 	*err = 0;
 	nvdimm_bus_lock(&nd_region->dev);
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP1 - Reading labels from DIMMs pid=%d\n", current->pid);
 	rc = init_active_labels(nd_region);
 	if (rc) {
+		dev_err(&nd_region->dev, "TRACE: nd_region_register_namespaces ERROR - Label reading failed: %d pid=%d\n", rc, current->pid);
 		nvdimm_bus_unlock(&nd_region->dev);
 		return rc;
 	}
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP1 - Label reading SUCCESS pid=%d\n", current->pid);
 
 	type = nd_region_to_nstype(nd_region);
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP2 - Creating namespaces, type=%d pid=%d\n", type, current->pid);
 	switch (type) {
 	case ND_DEVICE_NAMESPACE_IO:
+		dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP2a - Creating IO namespaces pid=%d\n", current->pid);
 		devs = create_namespace_io(nd_region);
 		break;
 	case ND_DEVICE_NAMESPACE_PMEM:
+		dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP2b - Creating PMEM namespaces pid=%d\n", current->pid);
 		devs = create_namespaces(nd_region);
 		break;
 	default:
+		dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP2c - Unknown namespace type=%d pid=%d\n", type, current->pid);
 		break;
 	}
 	nvdimm_bus_unlock(&nd_region->dev);
 
-	if (!devs)
+	if (!devs) {
+		dev_err(&nd_region->dev, "TRACE: nd_region_register_namespaces ERROR - No devices created pid=%d\n", current->pid);
 		return -ENODEV;
+	}
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP3 - Registering devices pid=%d\n", current->pid);
 
 	for (i = 0; devs[i]; i++) {
 		struct device *dev = devs[i];
@@ -2199,10 +2229,13 @@ int nd_region_register_namespaces(struct nd_region *nd_region, int *err)
 		dev_set_name(dev, "namespace%d.%d", nd_region->id, id);
 		device_initialize(dev);
 		lockdep_set_class(&dev->mutex, &nvdimm_namespace_key);
+		dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP3a - Registering device %s pid=%d\n", dev_name(dev), current->pid);
 		nd_device_register(dev);
 	}
-	if (i)
+	if (i) {
+		dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces STEP3b - Setting ns_seed to %s pid=%d\n", dev_name(devs[0]), current->pid);
 		nd_region->ns_seed = devs[0];
+	}
 
 	if (devs[i]) {
 		int j;
@@ -2223,8 +2256,11 @@ int nd_region_register_namespaces(struct nd_region *nd_region, int *err)
 	}
 	kfree(devs);
 
-	if (rc == -ENODEV)
+	if (rc == -ENODEV) {
+		dev_err(&nd_region->dev, "TRACE: nd_region_register_namespaces ERROR - ENODEV pid=%d\n", current->pid);
 		return rc;
+	}
 
+	dev_dbg(&nd_region->dev, "TRACE: nd_region_register_namespaces EXIT - SUCCESS, registered %d namespaces pid=%d\n", i, current->pid);
 	return i;
 }
