@@ -1756,24 +1756,37 @@ dax_iomap_rw(struct kiocb *iocb, struct iov_iter *iter,
 	loff_t done = 0;
 	int ret;
 
+	dev_dbg(&iomi.inode, "DAX_CORE: dax_iomap_rw ENTRY - len=%zu pos=%lld pid=%d\n", 
+		iomi.len, iomi.pos, current->pid);
+
 	if (!iomi.len)
 		return 0;
 
 	if (iov_iter_rw(iter) == WRITE) {
 		lockdep_assert_held_write(&iomi.inode->i_rwsem);
 		iomi.flags |= IOMAP_WRITE;
+		dev_dbg(&iomi.inode, "DAX_CORE: dax_iomap_rw STEP1 - WRITE operation pid=%d\n", current->pid);
 	} else {
 		lockdep_assert_held(&iomi.inode->i_rwsem);
+		dev_dbg(&iomi.inode, "DAX_CORE: dax_iomap_rw STEP1 - READ operation pid=%d\n", current->pid);
 	}
 
 	if (iocb->ki_flags & IOCB_NOWAIT)
 		iomi.flags |= IOMAP_NOWAIT;
 
+	dev_dbg(&iomi.inode, "DAX_CORE: dax_iomap_rw STEP2 - Starting iomap iteration pid=%d\n", current->pid);
 	while ((ret = iomap_iter(&iomi, ops)) > 0)
 		iomi.status = dax_iomap_iter(&iomi, iter);
 
 	done = iomi.pos - iocb->ki_pos;
 	iocb->ki_pos = iomi.pos;
+	
+	if (done > 0) {
+		dev_dbg(&iomi.inode, "DAX_CORE: dax_iomap_rw SUCCESS - done=%lld pid=%d\n", done, current->pid);
+	} else if (ret < 0) {
+		dev_err(&iomi.inode, "DAX_CORE: dax_iomap_rw ERROR - ret=%d pid=%d\n", ret, current->pid);
+	}
+	
 	return done ? done : ret;
 }
 EXPORT_SYMBOL_GPL(dax_iomap_rw);

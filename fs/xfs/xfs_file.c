@@ -261,16 +261,29 @@ xfs_file_dax_read(
 	struct xfs_inode	*ip = XFS_I(iocb->ki_filp->f_mapping->host);
 	ssize_t			ret = 0;
 
+	dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_read ENTRY - size=%zu pid=%d\n", 
+		iov_iter_count(to), current->pid);
+
 	trace_xfs_file_dax_read(iocb, to);
 
 	if (!iov_iter_count(to))
 		return 0; /* skip atime */
 
 	ret = xfs_ilock_iocb(iocb, XFS_IOLOCK_SHARED);
-	if (ret)
+	if (ret) {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_read ERROR - Lock failed: %d pid=%d\n", ret, current->pid);
 		return ret;
+	}
+	
+	dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_read STEP1 - Calling dax_iomap_rw pid=%d\n", current->pid);
 	ret = dax_iomap_rw(iocb, to, &xfs_read_iomap_ops);
 	xfs_iunlock(ip, XFS_IOLOCK_SHARED);
+
+	if (ret >= 0) {
+		dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_read SUCCESS - bytes=%zd pid=%d\n", ret, current->pid);
+	} else {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_read ERROR - ret=%zd pid=%d\n", ret, current->pid);
+	}
 
 	file_accessed(iocb->ki_filp);
 	return ret;
@@ -926,15 +939,23 @@ xfs_file_dax_write(
 	ssize_t			ret, error = 0;
 	loff_t			pos;
 
+	dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write ENTRY - size=%zu pid=%d\n", 
+		iov_iter_count(from), current->pid);
+
 	ret = xfs_ilock_iocb(iocb, iolock);
-	if (ret)
+	if (ret) {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write ERROR - Lock failed: %d pid=%d\n", ret, current->pid);
 		return ret;
+	}
 	ret = xfs_file_write_checks(iocb, from, &iolock, NULL);
-	if (ret)
+	if (ret) {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write ERROR - Write checks failed: %d pid=%d\n", ret, current->pid);
 		goto out;
+	}
 
 	pos = iocb->ki_pos;
 
+	dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write STEP1 - Calling dax_iomap_rw pid=%d\n", current->pid);
 	trace_xfs_file_dax_write(iocb, from);
 	ret = dax_iomap_rw(iocb, from, &xfs_dax_write_iomap_ops);
 	if (ret > 0 && iocb->ki_pos > i_size_read(inode)) {
@@ -944,14 +965,19 @@ xfs_file_dax_write(
 out:
 	if (iolock)
 		xfs_iunlock(ip, iolock);
-	if (error)
+	if (error) {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write ERROR - Setfilesize failed: %d pid=%d\n", error, current->pid);
 		return error;
+	}
 
 	if (ret > 0) {
+		dev_dbg(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write SUCCESS - bytes=%zd pid=%d\n", ret, current->pid);
 		XFS_STATS_ADD(ip->i_mount, xs_write_bytes, ret);
 
 		/* Handle various SYNC-type writes */
 		ret = generic_write_sync(iocb, ret);
+	} else if (ret < 0) {
+		dev_err(&ip->vfs_inode, "DAX_XFS: xfs_file_dax_write ERROR - Write failed: %zd pid=%d\n", ret, current->pid);
 	}
 	return ret;
 }
