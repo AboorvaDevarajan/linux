@@ -151,7 +151,7 @@ static int drc_pmem_bind(struct papr_scm_priv *p)
 		return rc;
 
 	p->bound_addr = saved;
-	dev_dbg(&p->pdev->dev, "BOUND_ADDR: drc_pmem_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n",
+	printk(KERN_INFO "BOUND_ADDR: drc_pmem_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n",
 		p->drc_index, p->bound_addr, current->pid);
 	return rc;
 }
@@ -216,7 +216,7 @@ static int drc_pmem_query_n_bind(struct papr_scm_priv *p)
 		goto err_out;
 
 	p->bound_addr = start_addr;
-	dev_dbg(&p->pdev->dev, "BOUND_ADDR: drc_pmem_query_n_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n", 
+		printk(KERN_INFO "BOUND_ADDR: drc_pmem_query_n_bind SUCCESS - drc=0x%x bound_addr=0x%llx pid=%d\n",
 		p->drc_index, p->bound_addr, current->pid);
 	return rc;
 
@@ -1258,7 +1258,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 	online_nid = numa_map_to_online_node(target_nid);
 	ndr_desc.numa_node = online_nid;
 	ndr_desc.target_node = target_nid;
-	dev_dbg(dev, "BOUND_ADDR: papr_scm_nvdimm_init STEP1 - Setting up region descriptor bound_addr=0x%llx pid=%d\n", 
+		printk(KERN_INFO "BOUND_ADDR: papr_scm_nvdimm_init STEP1 - Setting up region descriptor bound_addr=0x%llx pid=%d\n",
 		p->bound_addr, current->pid);
 	ndr_desc.res = &p->res;
 	ndr_desc.of_node = p->dn;
@@ -1272,7 +1272,7 @@ static int papr_scm_nvdimm_init(struct papr_scm_priv *p)
 		ndr_desc.flush = papr_scm_pmem_flush;
 	}
 
-	dev_dbg(dev, "BOUND_ADDR: papr_scm_nvdimm_init STEP2 - Creating region with bound_addr=0x%llx pid=%d\n", 
+		printk(KERN_INFO "BOUND_ADDR: papr_scm_nvdimm_init STEP2 - Creating region with bound_addr=0x%llx pid=%d\n",
 		p->bound_addr, current->pid);
 	if (p->is_volatile)
 		p->region = nvdimm_volatile_region_create(p->bus, &ndr_desc);

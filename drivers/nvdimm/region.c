@@ -21,7 +21,7 @@ static int nd_region_probe(struct device *dev)
 		.end = nd_region->ndr_start + nd_region->ndr_size - 1,
 	};
 
-	dev_dbg(dev, "TRACE: nd_region_probe ENTRY - region%d pid=%d\n", nd_region->id, current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe ENTRY - region%d pid=%d\n", nd_region->id, current->pid);
 
 	if (nd_region->num_lanes > num_online_cpus()
 			&& nd_region->num_lanes < num_possible_cpus()
@@ -33,13 +33,13 @@ static int nd_region_probe(struct device *dev)
 				nd_region->num_lanes);
 	}
 
-	dev_dbg(dev, "TRACE: nd_region_probe STEP1 - Activating region pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP1 - Activating region pid=%d\n", current->pid);
 	rc = nd_region_activate(nd_region);
 	if (rc) {
-		dev_err(dev, "TRACE: nd_region_probe ERROR - Region activation failed: %d pid=%d\n", rc, current->pid);
+		printk(KERN_INFO "TRACE: nd_region_probe ERROR - Region activation failed: %d pid=%d\n", rc, current->pid);
 		return rc;
 	}
-	dev_dbg(dev, "TRACE: nd_region_probe STEP1 - Region activation SUCCESS pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP1 - Region activation SUCCESS pid=%d\n", current->pid);
 
 	if (devm_init_badblocks(dev, &nd_region->bb))
 		return -ENODEV;
@@ -49,13 +49,13 @@ static int nd_region_probe(struct device *dev)
 		dev_warn(dev, "'badblocks' notification disabled\n");
 	nvdimm_badblocks_populate(nd_region, &nd_region->bb, &range);
 
-	dev_dbg(dev, "TRACE: nd_region_probe STEP2 - Registering namespaces pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP2 - Registering namespaces pid=%d\n", current->pid);
 	rc = nd_region_register_namespaces(nd_region, &err);
 	if (rc < 0) {
-		dev_err(dev, "TRACE: nd_region_probe ERROR - Namespace registration failed: %d pid=%d\n", rc, current->pid);
+		printk(KERN_INFO "TRACE: nd_region_probe ERROR - Namespace registration failed: %d pid=%d\n", rc, current->pid);
 		return rc;
 	}
-	dev_dbg(dev, "TRACE: nd_region_probe STEP2 - Namespace registration SUCCESS, found %d namespaces pid=%d\n", rc, current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP2 - Namespace registration SUCCESS, found %d namespaces pid=%d\n", rc, current->pid);
 
 	ndrd = dev_get_drvdata(dev);
 	ndrd->ns_active = rc;
@@ -64,18 +64,18 @@ static int nd_region_probe(struct device *dev)
 	if (rc && err && rc == err)
 		return -ENODEV;
 
-	dev_dbg(dev, "TRACE: nd_region_probe STEP3 - Creating seed devices pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP3 - Creating seed devices pid=%d\n", current->pid);
 	
-	dev_dbg(dev, "TRACE: nd_region_probe STEP3a - Creating BTT seed pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP3a - Creating BTT seed pid=%d\n", current->pid);
 	nd_region->btt_seed = nd_btt_create(nd_region);
 	
-	dev_dbg(dev, "TRACE: nd_region_probe STEP3b - Creating PFN seed pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP3b - Creating PFN seed pid=%d\n", current->pid);
 	nd_region->pfn_seed = nd_pfn_create(nd_region);
 	
-	dev_dbg(dev, "TRACE: nd_region_probe STEP3c - Creating DAX seed pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe STEP3c - Creating DAX seed pid=%d\n", current->pid);
 	nd_region->dax_seed = nd_dax_create(nd_region);
 	if (err == 0) {
-		dev_dbg(dev, "TRACE: nd_region_probe EXIT - SUCCESS pid=%d\n", current->pid);
+		printk(KERN_INFO "TRACE: nd_region_probe EXIT - SUCCESS pid=%d\n", current->pid);
 		return 0;
 	}
 
@@ -91,7 +91,7 @@ static int nd_region_probe(struct device *dev)
 	dev_err(dev, "failed to register %d namespace%s, continuing...\n",
 			err, err == 1 ? "" : "s");
 
-	dev_dbg(dev, "TRACE: nd_region_probe EXIT - SUCCESS with warnings pid=%d\n", current->pid);
+	printk(KERN_INFO "TRACE: nd_region_probe EXIT - SUCCESS with warnings pid=%d\n", current->pid);
 	return 0;
 }
 

@@ -1082,7 +1082,7 @@ static struct nd_region *nd_region_create(struct nvdimm_bus *nvdimm_bus,
 	dev->of_node = ndr_desc->of_node;
 	nd_region->ndr_size = resource_size(ndr_desc->res);
 	nd_region->ndr_start = ndr_desc->res->start;
-	dev_dbg(&nvdimm_bus->dev, "BOUND_ADDR: nd_region_create SUCCESS - region%d bound_addr=0x%llx size=0x%llx pid=%d\n", 
+		printk(KERN_INFO "BOUND_ADDR: nd_region_create SUCCESS - region%d bound_addr=0x%llx size=0x%llx pid=%d\n",
 		nd_region->id, nd_region->ndr_start, nd_region->ndr_size, current->pid);
 	nd_region->align = default_align(nd_region);
 	if (ndr_desc->flush)
@@ -1107,7 +1107,7 @@ err_id:
 struct nd_region *nvdimm_pmem_region_create(struct nvdimm_bus *nvdimm_bus,
 		struct nd_region_desc *ndr_desc)
 {
-	dev_dbg(&nvdimm_bus->dev, "BOUND_ADDR: nvdimm_pmem_region_create ENTRY - bound_addr=0x%llx pid=%d\n", 
+		printk(KERN_INFO "BOUND_ADDR: nvdimm_pmem_region_create ENTRY - bound_addr=0x%llx pid=%d\n",
 		ndr_desc->res->start, current->pid);
 	ndr_desc->num_lanes = ND_MAX_LANES;
 	return nd_region_create(nvdimm_bus, ndr_desc, &nd_pmem_device_type,
