@@ -589,6 +589,48 @@ SYSFS_SPRSETUP(pir, SPRN_PIR);
 SYSFS_SPRSETUP(tscr, SPRN_TSCR);
 
 /*
+ * PSSCR register with human-readable format
+ */
+static void read_psscr(void *val)
+{
+	*(unsigned long *)val = mfspr(SPRN_PSSCR);
+}
+
+static ssize_t show_psscr(struct device *dev,
+			   struct device_attribute *attr,
+			   char *buf)
+{
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
+	unsigned long val;
+	u64 pls, rl, mtl, psll, tr;
+	const char *ec_str, *esl_str, *sd_str;
+
+	smp_call_function_single(cpu->dev.id, read_psscr, &val, 1);
+
+	/* Extract bit fields */
+	pls = (val & PSSCR_PLS) >> PSSCR_PLS_SHIFT;
+	rl = val & PSSCR_RL_MASK;
+	mtl = (val & PSSCR_MTL_MASK) >> 4;
+	psll = (val & PSSCR_PSLL_MASK) >> 16;
+	tr = (val & PSSCR_TR_MASK) >> 8;
+	ec_str = (val & PSSCR_EC) ? "LPCR" : "Any";
+	esl_str = (val & PSSCR_ESL) ? "Yes" : "No";
+	sd_str = (val & PSSCR_SD) ? "Disabled" : "Enabled";
+
+	return sprintf(buf,
+		"Raw: 0x%016lx\n"
+		"Power-Saving Level Status (PLS): %llu\n"
+		"Requested Level (RL): %llu\n"
+		"Maximum Transition Level (MTL): %llu\n"
+		"Power-Saving Level Limit (PSLL): %llu\n"
+		"Transition State (TR): %llu\n"
+		"Exit Criterion (EC): %s interrupt\n"
+		"Enable State Loss (ESL): %s\n"
+		"Status Disable (SD): %s\n",
+		val, pls, rl, mtl, psll, tr, ec_str, esl_str, sd_str);
+}
+
+/*
   Lets only enable read for phyp resources and
   enable write when needed with a separate function.
   Lets be conservative and default to pseries.
@@ -597,6 +639,7 @@ static DEVICE_ATTR(spurr, 0400, show_spurr, NULL);
 static DEVICE_ATTR(purr, 0400, show_purr, store_purr);
 static DEVICE_ATTR(pir, 0400, show_pir, NULL);
 static DEVICE_ATTR(tscr, 0600, show_tscr, store_tscr);
+static DEVICE_ATTR(psscr, 0400, show_psscr, NULL);
 #endif /* CONFIG_PPC64 */
 
 #ifdef HAS_PPC_PMC_CLASSIC
@@ -916,6 +959,9 @@ static int register_cpu_online(unsigned int cpu)
 	if (cpu_has_feature(CPU_FTR_ARCH_206) &&
 		!firmware_has_feature(FW_FEATURE_LPAR))
 		device_create_file(s, &dev_attr_tscr);
+
+	if (cpu_has_feature(CPU_FTR_ARCH_300))
+		device_create_file(s, &dev_attr_psscr);
 #endif /* CONFIG_PPC64 */
 
 #ifdef CONFIG_PPC_E500
@@ -1012,6 +1058,9 @@ static int unregister_cpu_online(unsigned int cpu)
 	if (cpu_has_feature(CPU_FTR_ARCH_206) &&
 		!firmware_has_feature(FW_FEATURE_LPAR))
 		device_remove_file(s, &dev_attr_tscr);
+
+	if (cpu_has_feature(CPU_FTR_ARCH_300))
+		device_remove_file(s, &dev_attr_psscr);
 #endif /* CONFIG_PPC64 */
 
 #ifdef CONFIG_PPC_E500
