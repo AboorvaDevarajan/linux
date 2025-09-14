@@ -1189,6 +1189,16 @@ static void __init pnv_arch300_idle_init(void)
 		struct pnv_idle_states_t *state = &pnv_idle_states[i];
 		u64 psscr_rl = state->psscr_val & PSSCR_RL_MASK;
 
+		/* Explicitly disable Stop5 state */
+		if (psscr_rl == 5) {
+			pr_info("cpuidle-powernv: Disabling Stop5 state (RL=5) as requested\n");
+			continue;
+		}
+
+		/* Debug: Show which stop states are being processed */
+		pr_debug("cpuidle-powernv: Processing stop state RL=%llu, psscr_val=0x%016llx\n",
+			 psscr_rl, state->psscr_val);
+
 		/* No deep loss driver implemented for POWER10 yet */
 		if (pvr_version_is(PVR_POWER10) &&
 				state->flags & (OPAL_PM_TIMEBASE_STOP|OPAL_PM_LOSE_FULL_CONTEXT))
