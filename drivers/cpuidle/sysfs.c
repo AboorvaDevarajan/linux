@@ -314,10 +314,44 @@ static ssize_t show_state_default_status(struct cpuidle_state *state,
 		       state->flags & CPUIDLE_FLAG_OFF ? "disabled" : "enabled");
 }
 
+static ssize_t store_state_target_residency(struct cpuidle_state *state,
+					    struct cpuidle_state_usage *state_usage,
+					    const char *buf, size_t size)
+{
+	unsigned long long value_us;
+	int err;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	err = kstrtoull(buf, 0, &value_us);
+	if (err)
+		return err;
+
+	/* Check for overflow when casting to unsigned int */
+	if (value_us > UINT_MAX)
+		return -ERANGE;
+
+	/*
+	 * Pause cpuidle to ensure no governor is actively reading
+	 * target_residency_ns while we modify it. The state structure is
+	 * shared across all CPUs using this driver.
+	 */
+	cpuidle_pause_and_lock();
+
+	/* Update both microseconds and nanoseconds versions */
+	state->target_residency = (unsigned int)value_us;
+	state->target_residency_ns = (s64)value_us * NSEC_PER_USEC;
+
+	cpuidle_resume_and_unlock();
+
+	return size;
+}
+
 define_one_state_ro(name, show_state_name);
 define_one_state_ro(desc, show_state_desc);
 define_one_state_ro(latency, show_state_exit_latency);
-define_one_state_ro(residency, show_state_target_residency);
+define_one_state_rw(target_residency, show_state_target_residency, store_state_target_residency);
 define_one_state_ro(power, show_state_power_usage);
 define_one_state_ro(usage, show_state_usage);
 define_one_state_ro(rejected, show_state_rejected);
@@ -331,7 +365,7 @@ static struct attribute *cpuidle_state_default_attrs[] = {
 	&attr_name.attr,
 	&attr_desc.attr,
 	&attr_latency.attr,
-	&attr_residency.attr,
+	&attr_target_residency.attr,
 	&attr_power.attr,
 	&attr_usage.attr,
 	&attr_rejected.attr,
