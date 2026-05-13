@@ -22,6 +22,10 @@
 
 config = { missing_probes = "warn" }
 
+/* BTT arena can have ~500k LBAs; size maps accordingly */
+let @fwd = hash(524288);
+let @rev = hash(524288);
+
 BEGIN
 {
 	printf("BTT blackbox alias detector started\n");
