@@ -1396,6 +1396,13 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			ret = -EIO;
 			goto out_map;
 		}
+
+		trace_printk("BTT_WRITE_PREP cpu=%u lane=%u premap=0x%x "
+			"old_post=0x%x new_post=0x%x identity=%d\n",
+			smp_processor_id(), lane, premap,
+			old_postmap, new_postmap,
+			(old_postmap == premap) ? 1 : 0);
+
 		if (e_flag)
 			set_e_flag(old_postmap);
 

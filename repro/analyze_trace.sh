@@ -23,10 +23,16 @@ echo "Generated: $(date)"
 echo
 
 echo "--- 1. Top-level event counts ---"
-for ev in BTT_WRITE BTT_READ_MISMATCH BTT_FLOG; do
+for ev in BTT_WRITE_PREP BTT_WRITE BTT_READ_MISMATCH BTT_FLOG; do
     n=$(grep -c "$ev" "$LOG" || true)
     printf "  %-20s %s\n" "$ev" "$n"
 done
+echo
+
+echo "--- 1b. Identity-mapped writes (old_post == premap, first-write pattern) ---"
+grep "BTT_WRITE_PREP" "$LOG" | grep "identity=1" | head -20 || echo "(none)"
+id_count=$(grep "BTT_WRITE_PREP" "$LOG" | grep -c "identity=1" || true)
+printf "  Total identity writes: %s\n" "$id_count"
 echo
 
 echo "--- 2. First 20 BTT_READ_MISMATCH events ---"
@@ -81,6 +87,18 @@ echo "--- 6. BTT_FLOG events grouped by (free_block) -- look for the same physic
 grep BTT_FLOG "$LOG" | \
     sed -nE 's/.*free_block=(0x[0-9a-f]+).*/\1/p' | \
     sort | uniq -c | sort -rn | head -20
+
+echo
+echo "--- 7. Dual-ownership detection: postmaps claimed by multiple premaps ---"
+echo "    (Scanning BTT_WRITE new_post values for duplicates within close time windows)"
+grep "BTT_WRITE " "$LOG" | \
+    sed -nE 's/.*premap=(0x[0-9a-f]+).*new_post=(0x[0-9a-f]+).*/\2 \1/p' | \
+    sort | uniq -c | awk '$1 > 1 {print}' | sort -rn | head -20
+if [ $? -eq 0 ]; then
+    echo "  (Above shows postmap blocks written by more than one premap)"
+else
+    echo "  (none detected)"
+fi
 
 echo
 echo "=== Analysis complete: $OUT ==="
