@@ -1230,12 +1230,15 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 				goto out_lane;
 			}
 
-			arena->rtt[lane] = RTT_VALID | postmap;
 			/*
-			 * Barrier to make sure this write is not reordered
-			 * to do the verification map_read before the RTT store
+			 * Ensure the RTT store is visible to writers
+			 * before the verification map_read.  On weakly
+			 * ordered architectures a compiler barrier is not
+			 * sufficient — use store-release so the paired
+			 * load-acquire in the write path sees it.
 			 */
-			barrier();
+			smp_store_release(&arena->rtt[lane],
+						RTT_VALID | postmap);
 
 			ret = btt_map_read(arena, premap, &new_map, &new_t,
 						&new_e, NVDIMM_IO_ATOMIC);
@@ -1267,7 +1270,7 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 				goto out_rtt;
 		}
 
-		arena->rtt[lane] = RTT_INVALID;
+		smp_store_release(&arena->rtt[lane], RTT_INVALID);
 		nd_region_release_lane(btt->nd_region, lane);
 
 		len -= cur_len;
@@ -1278,7 +1281,7 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 	return 0;
 
  out_rtt:
-	arena->rtt[lane] = RTT_INVALID;
+	smp_store_release(&arena->rtt[lane], RTT_INVALID);
  out_lane:
 	nd_region_release_lane(btt->nd_region, lane);
 	return ret;
@@ -1345,7 +1348,8 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 
 		/* Wait if the new block is being read from */
 		for (i = 0; i < arena->nfree; i++)
-			while (arena->rtt[i] == (RTT_VALID | new_postmap))
+			while (smp_load_acquire(&arena->rtt[i]) ==
+						(RTT_VALID | new_postmap))
 				cpu_relax();
 
 
@@ -1364,6 +1368,15 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			if (ret)
 				goto out_lane;
 		}
+
+		/*
+		 * Ensure data written to new_postmap is globally visible
+		 * before the map entry is updated to point to it.  On
+		 * weakly ordered architectures (e.g. PowerPC) a reader
+		 * could otherwise see the new map entry but read stale
+		 * data from the block.
+		 */
+		smp_wmb();
 
 		lock_map(arena, premap);
 		ret = btt_map_read(arena, premap, &old_postmap, NULL, &e_flag,
