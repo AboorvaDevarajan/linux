@@ -85,26 +85,32 @@ kprobe:btt_map_write.constprop.0
 	$owner_p1 = @rev[$new];
 	if ($owner_p1 != 0 && $owner_p1 != $p1) {
 		$owner = $owner_p1 - 1;
-		@alias_count++;
-
-		printf("\n!!! ALIAS #%lld detected !!!\n", @alias_count);
-		printf("  cpu=%d comm=%s premap=0x%x new_post=0x%x owner_premap=0x%x\n",
-		       cpu, comm, $premap, $new, $owner);
-		printf("  timestamp=%llu ns\n", nsecs);
 
 		/*
-		 * Dump ring buffer context: scan all 256 possible lanes
-		 * looking for entries that reference the contested postmap.
-		 * This is only executed on the rare ALIAS path.
+		 * Verify the owner still maps to this postmap.
+		 * Normal COW freelist recycling causes @rev to go stale:
+		 * premap A maps to block X, then A is rewritten (COW to Y),
+		 * block X enters freelist, premap B gets block X.  @rev[X]
+		 * still says A, but @fwd[A] is now Y, not X.  Only report
+		 * if @fwd[owner] still equals the contested postmap.
 		 */
-		printf("  --- recent map_write events referencing postmap 0x%x ---\n", $new);
+		if (@fwd[$owner] == $new) {
+			@alias_count++;
 
-		/* Store alias info for post-detection analysis */
-		@alias_premap_a[(@alias_count)] = $premap;
-		@alias_premap_b[(@alias_count)] = $owner;
-		@alias_postmap[(@alias_count)]  = $new;
-		@alias_ts[(@alias_count)]       = nsecs;
-		@alias_cpu[(@alias_count)]      = cpu;
+			printf("\n!!! ALIAS #%lld detected !!!\n", @alias_count);
+			printf("  cpu=%d comm=%s premap=0x%x new_post=0x%x owner_premap=0x%x\n", cpu, comm, $premap, $new, $owner);
+			printf("  timestamp=%llu ns\n", nsecs);
+			printf("  --- recent map_write events referencing postmap 0x%x ---\n", $new);
+
+			@alias_premap_a[(@alias_count)] = $premap;
+			@alias_premap_b[(@alias_count)] = $owner;
+			@alias_postmap[(@alias_count)]  = $new;
+			@alias_ts[(@alias_count)]       = nsecs;
+			@alias_cpu[(@alias_count)]      = cpu;
+		} else {
+			/* Stale @rev from normal COW recycle — counted, not alarmed */
+			@stale_rev_count++;
+		}
 	}
 
 	/* --- update forward/reverse ownership --- */
@@ -164,8 +170,7 @@ kprobe:btt_submit_bio
  */
 interval:s:10
 {
-	printf("[heartbeat] map_writes=%lld flog=%lld bios=%lld aliases=%lld\n",
-	       @mapwrite_count, @flog_count, @bio_count, @alias_count);
+	printf("[heartbeat] map_writes=%lld flog=%lld bios=%lld aliases=%lld stale_rev=%lld\n", @mapwrite_count, @flog_count, @bio_count, @alias_count, @stale_rev_count);
 }
 
 END
@@ -175,6 +180,7 @@ END
 	printf("flog events:      %lld\n", @flog_count);
 	printf("bio events:       %lld\n", @bio_count);
 	printf("ALIAS detections: %lld\n", @alias_count);
+	printf("stale @rev fixes: %lld\n", @stale_rev_count);
 
 	if (@alias_count > 0) {
 		printf("\n=== ALIAS details ===\n");

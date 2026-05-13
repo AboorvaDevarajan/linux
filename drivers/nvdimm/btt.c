@@ -1234,11 +1234,10 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			 * Ensure the RTT store is visible to writers
 			 * before the verification map_read.  On weakly
 			 * ordered architectures a compiler barrier is not
-			 * sufficient — use store-release so the paired
-			 * load-acquire in the write path sees it.
+			 * sufficient.
 			 */
-			smp_store_release(&arena->rtt[lane],
-						RTT_VALID | postmap);
+			smp_mb();
+			WRITE_ONCE(arena->rtt[lane], RTT_VALID | postmap);
 
 			ret = btt_map_read(arena, premap, &new_map, &new_t,
 						&new_e, NVDIMM_IO_ATOMIC);
@@ -1270,7 +1269,8 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 				goto out_rtt;
 		}
 
-		smp_store_release(&arena->rtt[lane], RTT_INVALID);
+		smp_mb();
+		WRITE_ONCE(arena->rtt[lane], RTT_INVALID);
 		nd_region_release_lane(btt->nd_region, lane);
 
 		len -= cur_len;
@@ -1281,7 +1281,8 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 	return 0;
 
  out_rtt:
-	smp_store_release(&arena->rtt[lane], RTT_INVALID);
+	smp_mb();
+	WRITE_ONCE(arena->rtt[lane], RTT_INVALID);
  out_lane:
 	nd_region_release_lane(btt->nd_region, lane);
 	return ret;
@@ -1347,10 +1348,12 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 		new_postmap = arena->freelist[lane].block;
 
 		/* Wait if the new block is being read from */
-		for (i = 0; i < arena->nfree; i++)
-			while (smp_load_acquire(&arena->rtt[i]) ==
+		for (i = 0; i < arena->nfree; i++) {
+			while (READ_ONCE(arena->rtt[i]) ==
 						(RTT_VALID | new_postmap))
 				cpu_relax();
+		}
+		smp_mb();
 
 
 		if (new_postmap >= arena->internal_nlba) {
@@ -1408,17 +1411,7 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 		unlock_map(arena, premap);
 		nd_region_release_lane(btt->nd_region, lane);
 
-		/*
-		 * Identity-mapped block (ze==0): old_postmap == premap means
-		 * the physical block IS the LBA itself.  It now sits on the
-		 * freelist via the flog, but still contains stale data for
-		 * LBA "premap".  Mark it as an error block so the next write
-		 * on this lane zeroes it before reuse, preventing data leaks.
-		 */
-		if (old_postmap == premap)
-			arena->freelist[lane].has_err = 1;
-
-		if (e_flag || arena->freelist[lane].has_err) {
+		if (e_flag) {
 			ret = arena_clear_freelist_error(arena, lane);
 			if (ret)
 				return ret;
@@ -1722,9 +1715,13 @@ int nvdimm_namespace_detach_btt(struct nd_btt *nd_btt)
 }
 EXPORT_SYMBOL(nvdimm_namespace_detach_btt);
 
+#define BTT_FIX_VERSION "bttfix3-smp_mb"
+
 static int __init nd_btt_init(void)
 {
 	int rc = 0;
+
+	pr_info("nd_btt: loaded (%s)\n", BTT_FIX_VERSION);
 
 	debugfs_root = debugfs_create_dir("btt", NULL);
 	if (IS_ERR_OR_NULL(debugfs_root))
