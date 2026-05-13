@@ -1374,6 +1374,41 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			ret = -EIO;
 			goto out_map;
 		}
+
+		/*
+		 * If the map entry is in its initial state (ze==0),
+		 * btt_map_read returns old_postmap == premap (identity
+		 * mapping).  In this case the physical block IS the LBA
+		 * itself and has never been through the COW path, so it
+		 * must NOT be placed on the freelist.
+		 *
+		 * Instead, overwrite the data in place on the identity
+		 * block and materialize the map entry (set the NORMAL
+		 * flag) so future writes go through the normal COW path.
+		 * The freelist block we already wrote to is simply
+		 * abandoned — it will be picked up again on the next
+		 * normal write.
+		 */
+		if (old_postmap == premap) {
+			ret = btt_data_write(arena, premap, page, off,
+					cur_len);
+			if (ret)
+				goto out_map;
+
+			ret = btt_map_write(arena, premap, premap, 0, 0,
+					NVDIMM_IO_ATOMIC);
+			if (ret)
+				goto out_map;
+
+			unlock_map(arena, premap);
+			nd_region_release_lane(btt->nd_region, lane);
+
+			len -= cur_len;
+			off += cur_len;
+			sector += btt->sector_size >> SECTOR_SHIFT;
+			continue;
+		}
+
 		if (e_flag)
 			set_e_flag(old_postmap);
 
