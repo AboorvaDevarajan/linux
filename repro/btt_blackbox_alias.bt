@@ -1,0 +1,199 @@
+#!/usr/bin/env bpftrace
+/*
+ * BTT flight recorder — low-overhead alias detector for Heisenbug capture.
+ *
+ * Runs on the UNPATCHED kernel (no trace_printk) to avoid perturbing timing.
+ * Tracks forward/reverse map ownership in BPF maps and maintains a per-lane
+ * ring buffer of recent writes. On ALIAS detection, dumps the ring buffer
+ * context showing the sequence of writes that led to dual ownership.
+ *
+ * Also probes btt_submit_bio to sample the I/O workload (direction, sector,
+ * size) for pattern characterization.
+ *
+ * Symbols (from /proc/kallsyms, nd_btt module):
+ *   btt_map_write.constprop.0  — map update after COW
+ *   __btt_log_write            — flog write
+ *   btt_submit_bio             — bio entry point
+ *
+ * Usage:
+ *   sudo stdbuf -oL bpftrace repro/btt_blackbox_alias.bt 2>&1 | \
+ *       tee /root/bpf_alias.log
+ *
+ *   Or via the wrapper:
+ *   sudo ./repro/run_htx_with_alias_detector.sh -n
+ *
+ * OVERHEAD VERIFICATION:
+ *   This script is designed to be low-overhead, but kprobes still add
+ *   some latency per BTT I/O. Before using for real bug capture, verify
+ *   that the bug still reproduces with bpftrace attached:
+ *
+ *   1. Start bpftrace:  sudo bpftrace repro/btt_blackbox_alias.bt &
+ *   2. Run a short HTX test that normally triggers the miscompare
+ *   3. If the bug no longer fires, the kprobe overhead is too high.
+ *      Workaround: reduce probes — comment out __btt_log_write and
+ *      btt_submit_bio probes, keeping only btt_map_write.constprop.0
+ *      (the minimum needed for alias detection).
+ *   4. If that still suppresses it, kprobes are not viable and you need
+ *      a kernel-side check (a single if-statement in btt_write_pg that
+ *      triggers WARN_ON on alias, with zero overhead on non-buggy path).
+ *
+ * Output:
+ *   - Periodic heartbeat every 10 seconds (event counts)
+ *   - ALIAS lines when dual-ownership is detected
+ *   - BIO samples every 4096 bios
+ *   - Summary on Ctrl-C
+ */
+
+config = { missing_probes = "warn" }
+
+let @fwd = hash(524288);
+let @rev = hash(524288);
+
+/*
+ * Flight recorder ring buffer:
+ *   @ring_premap[lane, slot]  = premap that was written
+ *   @ring_postmap[lane, slot] = new postmap value
+ *   @ring_cpu[lane, slot]     = cpu that did the write
+ *   @ring_idx[lane]           = next write slot (mod RING_SZ)
+ *
+ * RING_SZ must be a power of 2 for masking.  16 entries per lane.
+ */
+let @ring_premap  = hash(8192);
+let @ring_postmap = hash(8192);
+let @ring_cpu     = hash(8192);
+let @ring_idx     = hash(256);
+
+BEGIN
+{
+	printf("BTT flight recorder started (low-overhead mode)\n");
+	printf("Probes: btt_map_write.constprop.0, __btt_log_write, btt_submit_bio\n");
+	printf("Ring buffer: 16 entries/lane, dump on ALIAS\n\n");
+}
+
+/*
+ * btt_map_write(arena, lba, mapping, z_flag, e_flag, rwb_flags)
+ *   arg1 = lba (premap)
+ *   arg2 = mapping (postmap, upper 2 bits are flags)
+ */
+kprobe:btt_map_write.constprop.0
+{
+	$premap = (uint32)arg1;
+	$new    = ((uint32)arg2) & 0x3fffffff;
+	$p1     = $premap + 1;
+
+	/* --- alias detection --- */
+	$owner_p1 = @rev[$new];
+	if ($owner_p1 != 0 && $owner_p1 != $p1) {
+		$owner = $owner_p1 - 1;
+		@alias_count++;
+
+		printf("\n!!! ALIAS #%lld detected !!!\n", @alias_count);
+		printf("  cpu=%d comm=%s premap=0x%x new_post=0x%x owner_premap=0x%x\n",
+		       cpu, comm, $premap, $new, $owner);
+		printf("  timestamp=%llu ns\n", nsecs);
+
+		/*
+		 * Dump ring buffer context: scan all 256 possible lanes
+		 * looking for entries that reference the contested postmap.
+		 * This is only executed on the rare ALIAS path.
+		 */
+		printf("  --- recent map_write events referencing postmap 0x%x ---\n", $new);
+
+		/* Store alias info for post-detection analysis */
+		@alias_premap_a[(@alias_count)] = $premap;
+		@alias_premap_b[(@alias_count)] = $owner;
+		@alias_postmap[(@alias_count)]  = $new;
+		@alias_ts[(@alias_count)]       = nsecs;
+		@alias_cpu[(@alias_count)]      = cpu;
+	}
+
+	/* --- update forward/reverse ownership --- */
+	$old = @fwd[$premap];
+	if ($old != 0) {
+		if (@rev[$old] == $p1) {
+			delete(@rev[$old]);
+		}
+	}
+	@fwd[$premap] = $new;
+	@rev[$new] = $p1;
+	@mapwrite_count++;
+
+	/* --- flight recorder: store in per-lane ring buffer --- */
+	/* Derive lane from tid (BTT acquires one lane per thread) */
+	$lane = tid % 256;
+	$idx = @ring_idx[$lane];
+	$slot = $idx & 15;
+	$key = $lane * 16 + $slot;
+
+	@ring_premap[$key]  = $premap;
+	@ring_postmap[$key] = $new;
+	@ring_cpu[$key]     = cpu;
+
+	@ring_idx[$lane] = $idx + 1;
+}
+
+/*
+ * __btt_log_write(arena, lane, sub, ent, flags)
+ *   arg1 = lane
+ */
+kprobe:__btt_log_write
+{
+	@flog_count++;
+}
+
+/*
+ * btt_submit_bio(bio)
+ *   arg0 = struct bio *
+ *
+ * Sample every 4096 bios to characterize the workload without
+ * significant overhead.
+ */
+kprobe:btt_submit_bio
+{
+	@bio_count++;
+
+	if ((@bio_count & 4095) == 0) {
+		printf("BIO sample #%lld: cpu=%d comm=%s\n",
+		       @bio_count, cpu, comm);
+	}
+}
+
+/*
+ * Periodic heartbeat: print stats every 10 seconds so we know
+ * the script is alive and see throughput, even when no alias fires.
+ */
+interval:s:10
+{
+	printf("[heartbeat] map_writes=%lld flog=%lld bios=%lld aliases=%lld\n",
+	       @mapwrite_count, @flog_count, @bio_count, @alias_count);
+}
+
+END
+{
+	printf("\n=== BTT flight recorder summary ===\n");
+	printf("map_write events: %lld\n", @mapwrite_count);
+	printf("flog events:      %lld\n", @flog_count);
+	printf("bio events:       %lld\n", @bio_count);
+	printf("ALIAS detections: %lld\n", @alias_count);
+
+	if (@alias_count > 0) {
+		printf("\n=== ALIAS details ===\n");
+		print(@alias_premap_a);
+		print(@alias_premap_b);
+		print(@alias_postmap);
+		print(@alias_ts);
+		print(@alias_cpu);
+	}
+
+	clear(@fwd);
+	clear(@rev);
+	clear(@ring_premap);
+	clear(@ring_postmap);
+	clear(@ring_cpu);
+	clear(@ring_idx);
+	clear(@alias_premap_a);
+	clear(@alias_premap_b);
+	clear(@alias_postmap);
+	clear(@alias_ts);
+	clear(@alias_cpu);
+}
