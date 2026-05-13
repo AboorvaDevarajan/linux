@@ -2,86 +2,92 @@
 /*
  * Black-box HTX/BTT alias detector.
  *
- * Goal:
- *   Detect cases where two different premaps are observed pointing to
- *   the same postmap at runtime (map alias), which should never happen.
+ * Detects when two different premaps point to the same physical postmap
+ * block at runtime — the signature of BTT map corruption.
+ *
+ * Uses actual kernel symbols from nd_btt module (confirmed via kallsyms):
+ *   btt_map_write.constprop.0  — map update after COW write
+ *   __btt_log_write            — flog entry write (called by btt_flog_write)
+ *   btt_submit_bio             — main BTT bio entry point
  *
  * Usage:
  *   sudo bpftrace repro/btt_blackbox_alias.bt
- *   # then run HTX workload in another shell
+ *   # then run HTX in another terminal
  *
- * Notes:
- *   - Filters to comm == "hxestorage" to reduce noise.
- *   - Hooks btt_map_write() and tracks forward/reverse map ownership.
- *   - Emits ALIAS lines on conflicting ownership.
- *   - Also samples btt_flog_write() metadata to aid correlation.
+ * Output:
+ *   ALIAS lines when dual-ownership is detected
+ *   FLOG samples every 1024 flog writes
+ *   Summary on Ctrl-C
  */
+
+config = { missing_probes = "warn" }
 
 BEGIN
 {
-  printf("BTT blackbox alias detector started\n");
-  printf("Watching btt_map_write/btt_flog_write for hxestorage\n");
+	printf("BTT blackbox alias detector started\n");
+	printf("Probing: btt_map_write.constprop.0, __btt_log_write [nd_btt]\n");
 }
 
-/* map_write(arena, lba/premap, mapping/postmap, trim, wb, flags) */
-kprobe:btt_map_write /comm == "hxestorage"/
+/*
+ * btt_map_write(arena, lba, mapping, z_flag, e_flag, rwb_flags)
+ * Compiler emits as btt_map_write.constprop.0 in nd_btt module.
+ *
+ * arg1 = lba (premap)
+ * arg2 = mapping (postmap, may have flag bits in upper 2 bits)
+ */
+kprobe:btt_map_write.constprop.0
 {
-  $premap = (uint32)arg1;
-  $new    = ((uint32)arg2) & 0x3fffffff;
-  $p1     = $premap + 1;
+	$premap = (uint32)arg1;
+	$new    = ((uint32)arg2) & 0x3fffffff;
+	$p1     = $premap + 1;
 
-  /*
-   * reverse map stores owner as premap+1 so key absence is unambiguous
-   * even when premap==0.
-   */
-  $owner_p1 = @rev[$new];
-  if ($owner_p1 != 0 && $owner_p1 != $p1) {
-    $owner = $owner_p1 - 1;
-    @alias_count = count();
-    printf("ALIAS cpu=%d premap=0x%x new_post=0x%x owner_premap=0x%x\n",
-           cpu, $premap, $new, $owner);
-  }
+	$owner_p1 = @rev[$new];
+	if ($owner_p1 != 0 && $owner_p1 != $p1) {
+		$owner = $owner_p1 - 1;
+		@alias_count++;
+		printf("ALIAS cpu=%d comm=%s premap=0x%x new_post=0x%x "
+		       "owner_premap=0x%x\n",
+		       cpu, comm, $premap, $new, $owner);
+	}
 
-  /*
-   * If we already know the previous postmap for this premap, clear reverse
-   * ownership if it still points back to this premap.
-   */
-  $old = @fwd[$premap];
-  if ($old != 0) {
-    if (@rev[$old] == $p1) {
-      delete(@rev[$old]);
-    }
-  }
+	$old = @fwd[$premap];
+	if ($old != 0) {
+		if (@rev[$old] == $p1) {
+			delete(@rev[$old]);
+		}
+	}
 
-  @fwd[$premap] = $new;
-  @rev[$new] = $p1;
-  @mapwrite_count = count();
+	@fwd[$premap] = $new;
+	@rev[$new] = $p1;
+	@mapwrite_count++;
 }
 
-/* flog_write(arena, lane, sub, ent) where ent has old_map/new_map words */
-kprobe:btt_flog_write /comm == "hxestorage"/
+/*
+ * __btt_log_write(arena, lane, sub, ent, flags)
+ * struct log_entry { __le32 lba, old_map, new_map, seq; }
+ *
+ * arg1 = lane
+ * arg3 = pointer to struct log_entry
+ */
+kprobe:__btt_log_write
 {
-  $lane = (uint32)arg1;
-  $ent  = (uint64)arg3;
+	$lane = (uint32)arg1;
 
-  /* struct log_entry: u32 lba, u32 old_map, u32 new_map, u32 seq */
-  $old = (*(uint32*)($ent + 4)) & 0x3fffffff;
-  $new = (*(uint32*)($ent + 8)) & 0x3fffffff;
+	@flog_count++;
 
-  @flog_count = count();
-
-  /* lightweight sampling: print 1 out of 1024 events */
-  if (((@flog_count) & 1023) == 0) {
-    printf("FLOG sample cpu=%d lane=%d old=0x%x new=0x%x\n",
-           cpu, $lane, $old, $new);
-  }
+	if ((@flog_count & 1023) == 0) {
+		printf("FLOG sample cpu=%d comm=%s lane=%u count=%lld\n",
+		       cpu, comm, $lane, @flog_count);
+	}
 }
 
 END
 {
-  printf("\n=== btt_blackbox_alias summary ===\n");
-  print(@mapwrite_count);
-  print(@flog_count);
-  print(@alias_count);
-}
+	printf("\n=== btt_blackbox_alias summary ===\n");
+	printf("map_write events: %lld\n", @mapwrite_count);
+	printf("flog events:      %lld\n", @flog_count);
+	printf("ALIAS detections: %lld\n", @alias_count);
 
+	clear(@fwd);
+	clear(@rev);
+}
