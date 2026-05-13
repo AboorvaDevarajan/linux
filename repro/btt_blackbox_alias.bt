@@ -45,8 +45,7 @@ kprobe:btt_map_write.constprop.0
 	if ($owner_p1 != 0 && $owner_p1 != $p1) {
 		$owner = $owner_p1 - 1;
 		@alias_count++;
-		printf("ALIAS cpu=%d comm=%s premap=0x%x new_post=0x%x "
-		       "owner_premap=0x%x\n",
+		printf("ALIAS cpu=%d comm=%s premap=0x%x new_post=0x%x owner_premap=0x%x\n",
 		       cpu, comm, $premap, $new, $owner);
 	}
 
