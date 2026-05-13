@@ -134,6 +134,7 @@ struct globals {
 	int         verbose;
 	uint64_t    g_err_count;    /* only inc'd under g_err_lock */
 	uint64_t    p1_err_count;   /* phase-1 bwrc miscompares */
+	uint64_t    g_newver_count; /* concurrent RC observed newer version */
 };
 
 static struct globals G;
@@ -218,7 +219,11 @@ static enum mis_type classify_block_concurrent(const uint8_t *rbuf,
 	if (expected_ver >= 2 && h->version < expected_ver - 1)
 		return MIS_OLD_VERSION;
 
-	/* version newer than expected means a test logic bug */
+	/*
+	 * Version newer than expected is possible in concurrent mode:
+	 * reader snapshots version N, then writer completes N+1 before
+	 * the reader reaches this block.
+	 */
 	if (h->version > expected_ver)
 		return MIS_NEW_VERSION;
 
@@ -411,6 +416,18 @@ static int do_read_verify_concurrent(struct thread_ctx *ctx,
 					      (uint32_t)ctx->tid);
 		if (t == MIS_NONE)
 			continue;
+
+		/*
+		 * NEW_VERSION is expected under concurrent writer+reader
+		 * workload and is not a data-integrity failure. Track it
+		 * separately as an informational event.
+		 */
+		if (t == MIS_NEW_VERSION) {
+			pthread_mutex_lock(&g_err_lock);
+			G.g_newver_count++;
+			pthread_mutex_unlock(&g_err_lock);
+			continue;
+		}
 
 		fill_block(ctx->expected_blk, lba, snap_ver,
 			   (uint32_t)ctx->tid);
@@ -884,6 +901,8 @@ out:
 
 	printf("\n=== Summary ===\n");
 	printf("Phase-1 bwrc miscompares:  %" PRIu64 "\n", G.p1_err_count);
+	printf("Phase-3 NEW_VERSION seen:  %" PRIu64 " (informational)\n",
+	       G.g_newver_count);
 	printf("Total miscompares:         %" PRIu64 "\n", G.g_err_count);
 	printf("Reports under:             %s/htxbtt_mis_*\n", G.log_dir);
 	printf("===============\n");
