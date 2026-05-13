@@ -398,6 +398,13 @@ static int btt_flog_write(struct arena_info *arena, u32 lane, u32 sub,
 		arena->freelist[lane].has_err = 1;
 	arena->freelist[lane].block = ent_lba(le32_to_cpu(ent->old_map));
 
+	trace_printk("BTT_FLOG lane=%u old_map=0x%x new_map=0x%x "
+		"free_block=0x%x\n",
+		lane,
+		ent_lba(le32_to_cpu(ent->old_map)),
+		ent_lba(le32_to_cpu(ent->new_map)),
+		arena->freelist[lane].block);
+
 	return ret;
 }
 
@@ -1261,6 +1268,21 @@ static int btt_read_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			goto out_rtt;
 		}
 
+		if (!ret && cur_len >= 64) {
+			void *dm = kmap_local_page(page);
+			u64 ml, ll;
+
+			memcpy(&ml, dm + off, 8);
+			memcpy(&ll, dm + off + 8, 8);
+			kunmap_local(dm);
+			if (ll != (u64)premap)
+				trace_printk("BTT_READ_MISMATCH cpu=%u "
+					"lane=%u premap=0x%x postmap=0x%x "
+					"data_lba=0x%llx data_magic=0x%llx\n",
+					smp_processor_id(), lane,
+					premap, postmap, ll, ml);
+		}
+
 		if (bip) {
 			ret = btt_rw_integrity(btt, bip, arena, postmap, READ);
 			if (ret)
@@ -1390,6 +1412,11 @@ static int btt_write_pg(struct btt *btt, struct bio_integrity_payload *bip,
 			NVDIMM_IO_ATOMIC);
 		if (ret)
 			goto out_map;
+
+		trace_printk("BTT_WRITE cpu=%u lane=%u premap=0x%x "
+			"old_post=0x%x new_post=0x%x\n",
+			smp_processor_id(), lane, premap,
+			old_postmap, new_postmap);
 
 		unlock_map(arena, premap);
 		nd_region_release_lane(btt->nd_region, lane);
