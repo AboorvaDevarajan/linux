@@ -1,0 +1,87 @@
+#!/usr/bin/env bpftrace
+/*
+ * Black-box HTX/BTT alias detector.
+ *
+ * Goal:
+ *   Detect cases where two different premaps are observed pointing to
+ *   the same postmap at runtime (map alias), which should never happen.
+ *
+ * Usage:
+ *   sudo bpftrace repro/btt_blackbox_alias.bt
+ *   # then run HTX workload in another shell
+ *
+ * Notes:
+ *   - Filters to comm == "hxestorage" to reduce noise.
+ *   - Hooks btt_map_write() and tracks forward/reverse map ownership.
+ *   - Emits ALIAS lines on conflicting ownership.
+ *   - Also samples btt_flog_write() metadata to aid correlation.
+ */
+
+BEGIN
+{
+  printf("BTT blackbox alias detector started\n");
+  printf("Watching btt_map_write/btt_flog_write for hxestorage\n");
+}
+
+/* map_write(arena, lba/premap, mapping/postmap, trim, wb, flags) */
+kprobe:btt_map_write /comm == "hxestorage"/
+{
+  $premap = (uint32)arg1;
+  $new    = ((uint32)arg2) & 0x3fffffff;
+  $p1     = $premap + 1;
+
+  /*
+   * reverse map stores owner as premap+1 so key absence is unambiguous
+   * even when premap==0.
+   */
+  $owner_p1 = @rev[$new];
+  if ($owner_p1 != 0 && $owner_p1 != $p1) {
+    $owner = $owner_p1 - 1;
+    @alias_count = count();
+    printf("ALIAS cpu=%d premap=0x%x new_post=0x%x owner_premap=0x%x\n",
+           cpu, $premap, $new, $owner);
+  }
+
+  /*
+   * If we already know the previous postmap for this premap, clear reverse
+   * ownership if it still points back to this premap.
+   */
+  $old = @fwd[$premap];
+  if ($old != 0) {
+    if (@rev[$old] == $p1) {
+      delete(@rev[$old]);
+    }
+  }
+
+  @fwd[$premap] = $new;
+  @rev[$new] = $p1;
+  @mapwrite_count = count();
+}
+
+/* flog_write(arena, lane, sub, ent) where ent has old_map/new_map words */
+kprobe:btt_flog_write /comm == "hxestorage"/
+{
+  $lane = (uint32)arg1;
+  $ent  = (uint64)arg3;
+
+  /* struct log_entry: u32 lba, u32 old_map, u32 new_map, u32 seq */
+  $old = (*(uint32*)($ent + 4)) & 0x3fffffff;
+  $new = (*(uint32*)($ent + 8)) & 0x3fffffff;
+
+  @flog_count = count();
+
+  /* lightweight sampling: print 1 out of 1024 events */
+  if (((@flog_count) & 1023) == 0) {
+    printf("FLOG sample cpu=%d lane=%d old=0x%x new=0x%x\n",
+           cpu, $lane, $old, $new);
+  }
+}
+
+END
+{
+  printf("\n=== btt_blackbox_alias summary ===\n");
+  print(@mapwrite_count);
+  print(@flog_count);
+  print(@alias_count);
+}
+
