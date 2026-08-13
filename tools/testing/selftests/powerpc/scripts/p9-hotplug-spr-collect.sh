@@ -8,6 +8,14 @@
 # Usage:
 #   p9-hotplug-spr-collect.sh [--out DIR] [--cpu N] [--iters N] [--hold SEC]
 #                             [--restore 0|1|both]
+#   p9-hotplug-spr-collect.sh --bisect [--bisect-from N] [--bisect-to N] [...]
+#
+# --bisect walks skip_spr=N one at a time with spr_restore on. If a number
+# hangs the AP ("Processor X is stuck"), reboot and continue:
+#   --bisect --bisect-from $((N+1))
+#
+# Numbered map: cat /sys/kernel/debug/powerpc/pnv_hotplug_idle/sprs
+#   1-4 KUAP, 5 ptcr, 6 rpr, 7 tscr, 8 lpcr, ... 21 sprg3
 #
 # Default OUT is ./p9-hp-spr-<timestamp> under the current directory.
 # Remaining flags are passed to p9-core-hotplug-spr.sh. Default restore=both
@@ -39,6 +47,9 @@ CPU=""
 ITERS=3
 HOLD=2
 RESTORE=both
+BISECT=0
+BISECT_FROM=1
+BISECT_TO=21
 DBG=/sys/kernel/debug/powerpc/pnv_hotplug_idle
 SYSFS=/sys/devices/system/cpu
 
@@ -54,6 +65,9 @@ while [ $# -gt 0 ]; do
 	--iters) ITERS=$2; shift 2 ;;
 	--hold) HOLD=$2; shift 2 ;;
 	--restore) RESTORE=$2; shift 2 ;;
+	--bisect) BISECT=1; shift ;;
+	--bisect-from) BISECT_FROM=$2; shift 2 ;;
+	--bisect-to) BISECT_TO=$2; shift 2 ;;
 	-h|--help) usage ;;
 	*) echo "unknown arg: $1" >&2; usage ;;
 	esac
@@ -121,6 +135,9 @@ dump_idle_boot() {
 		echo "=== $DBG ==="
 		if [ -d "$DBG" ]; then
 			echo "spr_restore=$(cat "$DBG/spr_restore" 2>/dev/null || echo missing)"
+			echo "skip_spr=$(cat "$DBG/skip_spr" 2>/dev/null || echo missing)"
+			echo
+			cat "$DBG/sprs" 2>/dev/null || true
 			echo
 			cat "$DBG/pls" 2>/dev/null || echo "(pls empty — no hotplug wakes yet)"
 		else
@@ -153,6 +170,31 @@ run_one() {
 	dmesg > "$OUT/dmesg-after-restore-${mode}.txt"
 	if [ -f "$DBG/pls" ]; then
 		cat "$DBG/pls" > "$OUT/pls-after-restore-${mode}.txt"
+	fi
+	return 0
+}
+
+run_skip() {
+	local n=$1
+	local extra=()
+	[ -n "$CPU" ] && extra+=(--cpu "$CPU")
+
+	echo "==== collect skip_spr=$n iters=$ITERS hold=${HOLD}s out=$OUT ===="
+	COLLECT_DIR="$OUT/cycles" "$INNER" \
+		--restore 1 --skip-spr "$n" --iters "$ITERS" --hold "$HOLD" \
+		"${extra[@]}" \
+		> >(tee "$OUT/run-skip-${n}.log") \
+		2> >(tee -a "$OUT/run-skip-${n}.log" >&2) || {
+			echo "inner script skip_spr=$n exited $?" | tee -a "$OUT/run-skip-${n}.log"
+			return 1
+		}
+
+	dmesg > "$OUT/dmesg-after-skip-${n}.txt"
+	if [ -f "$DBG/pls" ]; then
+		cat "$DBG/pls" > "$OUT/pls-after-skip-${n}.txt"
+	fi
+	if [ -f "$DBG/stage" ]; then
+		cat "$DBG/stage" > "$OUT/stage-after-skip-${n}.txt"
 	fi
 	return 0
 }
@@ -337,19 +379,49 @@ dmesg > "$OUT/dmesg-before.txt"
 echo "collecting into $OUT"
 
 rc=0
-case "$RESTORE" in
-both) MODES="1 0" ;;
-0|1) MODES=$RESTORE ;;
-*) echo "--restore must be 0, 1, or both" >&2; exit 1 ;;
-esac
-
-for mode in $MODES; do
-	if ! run_one "$mode"; then
-		rc=1
-		echo "restore=$mode failed; writing summary with what we have"
-		break
+if [ "$BISECT" = 1 ]; then
+	if [ -f "$DBG/sprs" ]; then
+		cp "$DBG/sprs" "$OUT/sprs.txt"
 	fi
-done
+	echo "bisect skip_spr=$BISECT_FROM..$BISECT_TO (spr_restore=Y, omit one)"
+	for n in $(seq "$BISECT_FROM" "$BISECT_TO"); do
+		name=""
+		if [ -f "$DBG/sprs" ]; then
+			name=$(awk -v n="$n" '$1==n {print $2}' "$DBG/sprs" | head -1)
+		fi
+		echo
+		echo "########## skip_spr=$n ${name:+($name)} ##########"
+		if ! run_skip "$n"; then
+			rc=1
+			echo "$n ${name:-}" > "$OUT/HUNG_AT"
+			[ -f "$DBG/stage" ] && cat "$DBG/stage" | tee "$OUT/stage-hung.txt"
+			echo
+			echo "HUNG or failed omitting SPR #$n ${name:+($name)}"
+			echo "Those CPUs stay dead until reboot."
+			echo "After reboot, continue with:"
+			echo "  $0 --bisect --bisect-from $((n+1)) --hold $HOLD --iters $ITERS ${CPU:+--cpu $CPU}"
+			break
+		fi
+		echo "OK skip_spr=$n ${name:+($name)} — CPUs came back"
+	done
+	if [ "$rc" -eq 0 ]; then
+		echo "bisect complete: skip_spr $BISECT_FROM..$BISECT_TO all survived"
+	fi
+else
+	case "$RESTORE" in
+	both) MODES="1 0" ;;
+	0|1) MODES=$RESTORE ;;
+	*) echo "--restore must be 0, 1, or both" >&2; exit 1 ;;
+	esac
+
+	for mode in $MODES; do
+		if ! run_one "$mode"; then
+			rc=1
+			echo "restore=$mode failed; writing summary with what we have"
+			break
+		fi
+	done
+fi
 
 write_summary || true
 

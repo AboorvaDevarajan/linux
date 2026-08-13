@@ -639,6 +639,89 @@ static DEFINE_PER_CPU(struct pnv_hp_pls, pnv_hp_pls);
 
 static bool pnv_hotplug_spr_restore __read_mostly = true;
 
+/*
+ * Numbered C-level restores in power9_idle_stop(). 0 = omit none.
+ * spr_restore=N (debugfs skip_spr) omits that one register only;
+ * spr_restore=0 still omits the whole set.
+ */
+enum pnv_hp_spr_id {
+	PNV_HP_SPR_NONE	= 0,
+	PNV_HP_SPR_AMR	= 1,
+	PNV_HP_SPR_IAMR	= 2,
+	PNV_HP_SPR_AMOR	= 3,
+	PNV_HP_SPR_UAMOR	= 4,
+	PNV_HP_SPR_PTCR	= 5,
+	PNV_HP_SPR_RPR	= 6,
+	PNV_HP_SPR_TSCR	= 7,
+	PNV_HP_SPR_LPCR	= 8,
+	PNV_HP_SPR_HFSCR	= 9,
+	PNV_HP_SPR_FSCR	= 10,
+	PNV_HP_SPR_PID	= 11,
+	PNV_HP_SPR_PURR	= 12,
+	PNV_HP_SPR_SPURR	= 13,
+	PNV_HP_SPR_DSCR	= 14,
+	PNV_HP_SPR_CIABR	= 15,
+	PNV_HP_SPR_MMCRA	= 16,
+	PNV_HP_SPR_MMCR0	= 17,
+	PNV_HP_SPR_MMCR1	= 18,
+	PNV_HP_SPR_MMCR2	= 19,
+	PNV_HP_SPR_LDBAR	= 20,
+	PNV_HP_SPR_SPRG3	= 21,
+	PNV_HP_SPR_LAST	= PNV_HP_SPR_SPRG3,
+};
+
+static const char * const pnv_hp_spr_names[] = {
+	[PNV_HP_SPR_NONE]	= "none",
+	[PNV_HP_SPR_AMR]	= "amr",
+	[PNV_HP_SPR_IAMR]	= "iamr",
+	[PNV_HP_SPR_AMOR]	= "amor",
+	[PNV_HP_SPR_UAMOR]	= "uamor",
+	[PNV_HP_SPR_PTCR]	= "ptcr",
+	[PNV_HP_SPR_RPR]	= "rpr",
+	[PNV_HP_SPR_TSCR]	= "tscr",
+	[PNV_HP_SPR_LPCR]	= "lpcr",
+	[PNV_HP_SPR_HFSCR]	= "hfscr",
+	[PNV_HP_SPR_FSCR]	= "fscr",
+	[PNV_HP_SPR_PID]	= "pid",
+	[PNV_HP_SPR_PURR]	= "purr",
+	[PNV_HP_SPR_SPURR]	= "spurr",
+	[PNV_HP_SPR_DSCR]	= "dscr",
+	[PNV_HP_SPR_CIABR]	= "ciabr",
+	[PNV_HP_SPR_MMCRA]	= "mmcra",
+	[PNV_HP_SPR_MMCR0]	= "mmcr0",
+	[PNV_HP_SPR_MMCR1]	= "mmcr1",
+	[PNV_HP_SPR_MMCR2]	= "mmcr2",
+	[PNV_HP_SPR_LDBAR]	= "ldbar",
+	[PNV_HP_SPR_SPRG3]	= "sprg3",
+};
+
+static u32 pnv_hp_skip_spr; /* 0 = omit none; else omit that id */
+
+enum {
+	PNV_HP_ST_OFF	= 0,
+	PNV_HP_ST_ENTER	= 1,
+	PNV_HP_ST_WOKE	= 2,
+	PNV_HP_ST_PRE_MMU	= 3,
+	PNV_HP_ST_POST_MMU	= 4,
+};
+
+static DEFINE_PER_CPU(u32, pnv_hp_stage);
+
+static void pnv_hp_mark(bool hotplug, u32 st)
+{
+	if (hotplug)
+		this_cpu_write(pnv_hp_stage, st);
+}
+
+static bool pnv_hp_omit(bool hotplug, enum pnv_hp_spr_id id)
+{
+	if (!hotplug)
+		return false;
+	if (!pnv_hotplug_spr_restore)
+		return true;
+	return pnv_hp_skip_spr == id;
+}
+
 static void pnv_hp_pls_record(unsigned long pls, unsigned long srr1,
 			      bool skipped)
 {
@@ -682,6 +765,17 @@ static inline bool pnv_hp_skip_spr_restore(bool hotplug)
 {
 	return false;
 }
+
+static inline bool pnv_hp_omit(bool hotplug, unsigned int id)
+{
+	return false;
+}
+
+static inline void pnv_hp_mark(bool hotplug, unsigned int st)
+{
+}
+
+#define pnv_hp_skip_spr	0
 #endif
 
 static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
@@ -697,6 +791,8 @@ static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 	struct p9_sprs sprs = {}; /* avoid false used-uninitialised */
 	bool sprs_saved = false;
 	bool skip_spr_restore = pnv_hp_skip_spr_restore(hotplug);
+
+	pnv_hp_mark(hotplug, PNV_HP_ST_ENTER);
 
 	if (!(psscr & (PSSCR_EC|PSSCR_ESL))) {
 		/* EC=ESL=0 case */
@@ -771,6 +867,7 @@ static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 	sprs.uamor	= mfspr(SPRN_UAMOR);
 
 	srr1 = isa300_idle_stop_mayloss(psscr);		/* go idle */
+	pnv_hp_mark(hotplug, PNV_HP_ST_WOKE);
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 	local_paca->requested_psscr = 0;
@@ -786,12 +883,14 @@ static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 		 * We don't need an isync after the mtsprs here because the
 		 * upcoming mtmsrd is execution synchronizing.
 		 */
-		if (!skip_spr_restore) {
+		if (!pnv_hp_omit(hotplug, PNV_HP_SPR_AMR))
 			mtspr(SPRN_AMR,		sprs.amr);
+		if (!pnv_hp_omit(hotplug, PNV_HP_SPR_IAMR))
 			mtspr(SPRN_IAMR,	sprs.iamr);
+		if (!pnv_hp_omit(hotplug, PNV_HP_SPR_AMOR))
 			mtspr(SPRN_AMOR,	~0);
+		if (!pnv_hp_omit(hotplug, PNV_HP_SPR_UAMOR))
 			mtspr(SPRN_UAMOR,	sprs.uamor);
-		}
 
 		/*
 		 * Workaround for POWER9 DD2.0, if we lost resources, the ERAT
@@ -825,7 +924,7 @@ static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 	pls = (psscr & PSSCR_PLS) >> PSSCR_PLS_SHIFT;
 	if (hotplug)
 		pnv_hp_pls_record(pls, srr1,
-				  skip_spr_restore &&
+				  (skip_spr_restore || pnv_hp_skip_spr) &&
 				  pls >= deep_spr_loss_state);
 	if (likely(pls < deep_spr_loss_state)) {
 		if (sprs_saved)
@@ -842,11 +941,12 @@ static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 		goto core_woken;
 
 	/* Per-core SPRs */
-	if (!skip_spr_restore) {
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_PTCR))
 		mtspr(SPRN_PTCR,	sprs.ptcr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_RPR))
 		mtspr(SPRN_RPR,		sprs.rpr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_TSCR))
 		mtspr(SPRN_TSCR,	sprs.tscr);
-	}
 
 	if (pls >= pnv_first_tb_loss_level) {
 		/* TB loss */
@@ -865,31 +965,46 @@ core_woken:
 	atomic_unlock_and_stop_thread_idle();
 
 	/* Per-thread SPRs */
-	if (!skip_spr_restore) {
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_LPCR))
 		mtspr(SPRN_LPCR,	sprs.lpcr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_HFSCR))
 		mtspr(SPRN_HFSCR,	sprs.hfscr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_FSCR))
 		mtspr(SPRN_FSCR,	sprs.fscr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_PID))
 		mtspr(SPRN_PID,		sprs.pid);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_PURR))
 		mtspr(SPRN_PURR,	sprs.purr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_SPURR))
 		mtspr(SPRN_SPURR,	sprs.spurr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_DSCR))
 		mtspr(SPRN_DSCR,	sprs.dscr);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_CIABR))
 		mtspr(SPRN_CIABR,	sprs.ciabr);
 
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_MMCRA))
 		mtspr(SPRN_MMCRA,	sprs.mmcra);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_MMCR0))
 		mtspr(SPRN_MMCR0,	sprs.mmcr0);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_MMCR1))
 		mtspr(SPRN_MMCR1,	sprs.mmcr1);
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_MMCR2))
 		mtspr(SPRN_MMCR2,	sprs.mmcr2);
-		if (!firmware_has_feature(FW_FEATURE_ULTRAVISOR))
-			mtspr(SPRN_LDBAR, sprs.ldbar);
+	if (!firmware_has_feature(FW_FEATURE_ULTRAVISOR) &&
+	    !pnv_hp_omit(hotplug, PNV_HP_SPR_LDBAR))
+		mtspr(SPRN_LDBAR, sprs.ldbar);
 
+	if (!pnv_hp_omit(hotplug, PNV_HP_SPR_SPRG3))
 		mtspr(SPRN_SPRG3,	local_paca->sprg_vdso);
-	}
 
 	if (!radix_enabled())
 		__slb_restore_bolted_realmode();
 
+	pnv_hp_mark(hotplug, PNV_HP_ST_PRE_MMU);
+
 out:
 	mtmsr(MSR_KERNEL);
+	pnv_hp_mark(hotplug, PNV_HP_ST_POST_MMU);
 
 	return srr1;
 }
@@ -1614,9 +1729,13 @@ static void pnv_hp_pls_print(unsigned int cpu)
 			       r->pls_hist[i]);
 	}
 
-	pr_info("cpu %u hotplug: wakes=%u last_pls=%u max_pls=%u deep_spr_loss=0x%llx restore=%d skipped=%u deep=%u srr1(noloss/gpr/hv)=%u/%u/%u pls:%s\n",
+	pr_info("cpu %u hotplug: wakes=%u last_pls=%u max_pls=%u deep_spr_loss=0x%llx restore=%d skip_spr=%u(%s) skipped=%u deep=%u stage=%u srr1(noloss/gpr/hv)=%u/%u/%u pls:%s\n",
 		cpu, r->wakes, r->last_pls, r->max_pls, deep_spr_loss_state,
-		pnv_hotplug_spr_restore, r->restore_skipped, r->deep_wakes,
+		pnv_hotplug_spr_restore, pnv_hp_skip_spr,
+		pnv_hp_skip_spr <= PNV_HP_SPR_LAST ?
+			pnv_hp_spr_names[pnv_hp_skip_spr] : "?",
+		r->restore_skipped, r->deep_wakes,
+		per_cpu(pnv_hp_stage, cpu),
 		r->srr1_noloss, r->srr1_gprloss, r->srr1_hvloss, buf);
 }
 
@@ -1631,9 +1750,12 @@ static int pnv_hp_pls_show(struct seq_file *m, void *v)
 {
 	int cpu, i;
 
-	seq_printf(m, "spr_restore %d deep_spr_loss_state 0x%llx first_tb_loss 0x%llx deepest_psscr 0x%llx\n",
-		   pnv_hotplug_spr_restore, deep_spr_loss_state,
-		   pnv_first_tb_loss_level, pnv_deepest_stop_psscr_val);
+	seq_printf(m, "spr_restore %d skip_spr %u(%s) deep_spr_loss_state 0x%llx first_tb_loss 0x%llx deepest_psscr 0x%llx\n",
+		   pnv_hotplug_spr_restore, pnv_hp_skip_spr,
+		   pnv_hp_skip_spr <= PNV_HP_SPR_LAST ?
+			pnv_hp_spr_names[pnv_hp_skip_spr] : "?",
+		   deep_spr_loss_state, pnv_first_tb_loss_level,
+		   pnv_deepest_stop_psscr_val);
 
 	for_each_present_cpu(cpu) {
 		struct pnv_hp_pls *r = per_cpu_ptr(&pnv_hp_pls, cpu);
@@ -1668,12 +1790,51 @@ static int pnv_hp_pls_reset_set(void *data, u64 val)
 DEFINE_DEBUGFS_ATTRIBUTE(pnv_hp_pls_reset_fops, NULL, pnv_hp_pls_reset_set,
 			 "%llu\n");
 
+static int pnv_hp_sprs_show(struct seq_file *m, void *v)
+{
+	int i;
+
+	seq_printf(m, "skip_spr %u (%s)  spr_restore %d\n",
+		   pnv_hp_skip_spr,
+		   pnv_hp_skip_spr <= PNV_HP_SPR_LAST ?
+			pnv_hp_spr_names[pnv_hp_skip_spr] : "?",
+		   pnv_hotplug_spr_restore);
+	seq_puts(m, " 0 none   restore every C-level SPR (stock)\n");
+	seq_puts(m, " 1 amr    2 iamr   3 amor   4 uamor   (shallow / KUAP)\n");
+	seq_puts(m, " 5 ptcr   6 rpr    7 tscr              (per-core, first thread)\n");
+	seq_puts(m, " 8 lpcr   9 hfscr 10 fscr  11 pid\n");
+	seq_puts(m, "12 purr  13 spurr 14 dscr  15 ciabr\n");
+	seq_puts(m, "16 mmcra 17 mmcr0 18 mmcr1 19 mmcr2\n");
+	seq_puts(m, "20 ldbar 21 sprg3\n");
+	seq_puts(m, "write skip_spr to omit that id only (spr_restore must be Y)\n");
+	for (i = 0; i <= PNV_HP_SPR_LAST; i++)
+		seq_printf(m, "%2u %-8s%s\n", i, pnv_hp_spr_names[i],
+			   i && i == pnv_hp_skip_spr ? "  [omitted]" : "");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(pnv_hp_sprs);
+
+static int pnv_hp_stage_show(struct seq_file *m, void *v)
+{
+	int cpu;
+
+	seq_puts(m, "# 0=off 1=enter 2=woke 3=pre_mmu 4=post_mmu\n");
+	for_each_present_cpu(cpu)
+		seq_printf(m, "cpu %d stage %u\n", cpu,
+			   per_cpu(pnv_hp_stage, cpu));
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(pnv_hp_stage);
+
 static void __init pnv_hp_pls_debugfs_init(void)
 {
 	struct dentry *dir;
 
 	dir = debugfs_create_dir("pnv_hotplug_idle", arch_debugfs_dir);
 	debugfs_create_bool("spr_restore", 0600, dir, &pnv_hotplug_spr_restore);
+	debugfs_create_u32("skip_spr", 0600, dir, &pnv_hp_skip_spr);
+	debugfs_create_file("sprs", 0400, dir, NULL, &pnv_hp_sprs_fops);
+	debugfs_create_file("stage", 0400, dir, NULL, &pnv_hp_stage_fops);
 	debugfs_create_file("pls", 0400, dir, NULL, &pnv_hp_pls_fops);
 	debugfs_create_file("reset", 0200, dir, NULL, &pnv_hp_pls_reset_fops);
 }

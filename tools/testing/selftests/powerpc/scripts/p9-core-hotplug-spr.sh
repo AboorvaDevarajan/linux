@@ -9,7 +9,12 @@
 #
 # Usage:
 #   p9-core-hotplug-spr.sh [--cpu N] [--iters N] [--hold SEC] [--restore 0|1|both]
-#   p9-hotplug-spr-collect.sh [...]   # wrapper: same flags plus --out DIR, writes SUMMARY.txt
+#                         [--skip-spr N]
+#   p9-hotplug-spr-collect.sh [--bisect] [--bisect-from N] [--bisect-to N] ...
+#
+# --skip-spr N  restore all C-level SPRs except number N (spr_restore forced on).
+#               cat /sys/kernel/debug/powerpc/pnv_hotplug_idle/sprs for the map.
+#               0 = omit none. 5 = ptcr (first suspect).
 #
 # Defaults: last present CPU whose core does not include CPU 0, 3 iters,
 # 2s hold while offline, restore=both (stock then skip).
@@ -30,6 +35,7 @@ CPU=""
 ITERS=3
 HOLD=2
 RESTORE=both
+SKIP_SPR=0
 SYSFS=/sys/devices/system/cpu
 DBG=/sys/kernel/debug/powerpc/pnv_hotplug_idle
 
@@ -44,6 +50,7 @@ while [ $# -gt 0 ]; do
 	--iters) ITERS=$2; shift 2 ;;
 	--hold) HOLD=$2; shift 2 ;;
 	--restore) RESTORE=$2; shift 2 ;;
+	--skip-spr) SKIP_SPR=$2; shift 2 ;;
 	-h|--help) usage ;;
 	*) echo "unknown arg: $1" >&2; usage ;;
 	esac
@@ -124,6 +131,10 @@ set_restore() {
 		exit 1
 	fi
 	echo "$val" > "$DBG/spr_restore"
+	if [ -f "$DBG/skip_spr" ]; then
+		echo "$SKIP_SPR" > "$DBG/skip_spr"
+		echo "skip_spr=$(cat "$DBG/skip_spr")"
+	fi
 	echo "spr_restore=$(cat "$DBG/spr_restore")"
 }
 
@@ -134,6 +145,8 @@ reset_hist() {
 dump_hist() {
 	echo "---- $DBG/pls ----"
 	cat "$DBG/pls" || true
+	echo "---- $DBG/stage ----"
+	cat "$DBG/stage" 2>/dev/null || true
 	echo "---- dmesg (hotplug pls) ----"
 	dmesg -t | grep 'cpu .* hotplug:' | tail -n 40 || true
 	if [ -n "${COLLECT_DIR:-}" ]; then
@@ -162,6 +175,11 @@ online_core() {
 		wait_state "$cpu" 1
 	done
 }
+
+if [ "$SKIP_SPR" != 0 ]; then
+	RESTORE=1
+	echo "omit SPR #$SKIP_SPR only (spr_restore forced on)"
+fi
 
 if [ -z "$CPU" ]; then
 	CPU=$(pick_cpu)
