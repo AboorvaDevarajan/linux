@@ -9,6 +9,7 @@
 #
 # Usage:
 #   p9-core-hotplug-spr.sh [--cpu N] [--iters N] [--hold SEC] [--restore 0|1|both]
+#   p9-hotplug-spr-collect.sh [...]   # wrapper: same flags plus --out DIR, writes SUMMARY.txt
 #
 # Defaults: last present CPU whose core does not include CPU 0, 3 iters,
 # 2s hold while offline, restore=both (stock then skip).
@@ -135,6 +136,12 @@ dump_hist() {
 	cat "$DBG/pls" || true
 	echo "---- dmesg (hotplug pls) ----"
 	dmesg -t | grep 'cpu .* hotplug:' | tail -n 40 || true
+	if [ -n "${COLLECT_DIR:-}" ]; then
+		mkdir -p "$COLLECT_DIR"
+		cat "$DBG/pls" > "$COLLECT_DIR/pls-restore${mode}-cycle${i}.txt" 2>/dev/null || true
+		dmesg -t | grep 'cpu .* hotplug:' \
+			> "$COLLECT_DIR/dmesg-hotplug-restore${mode}-cycle${i}.txt" 2>/dev/null || true
+	fi
 }
 
 offline_core() {
