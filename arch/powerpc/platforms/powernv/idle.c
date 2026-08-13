@@ -12,6 +12,11 @@
 #include <linux/of.h>
 #include <linux/device.h>
 #include <linux/cpu.h>
+#ifdef CONFIG_HOTPLUG_CPU
+#include <linux/cpuhotplug.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#endif
 
 #include <asm/firmware.h>
 #include <asm/interrupt.h>
@@ -606,7 +611,80 @@ struct p9_sprs {
 	u64 uamor;
 };
 
-static unsigned long power9_idle_stop(unsigned long psscr)
+
+#ifdef CONFIG_HOTPLUG_CPU
+/*
+ * Probe: does CPU hotplug on POWER9 actually need the C-level SPR
+ * save/restore in power9_idle_stop()? The cpuidle wakeup path is
+ * untouched. Default is restore=on (stock behaviour).
+ *
+ * GPR restore in isa300_idle_stop_mayloss / idle_return_gpr_loss is
+ * not gated: without it the thread cannot return to C.
+ * Per-core idle_state accounting, TB resync, hash SLB rebuild and
+ * P9 DD2 ERAT/MMCRA workarounds also stay on.
+ */
+struct pnv_hp_pls {
+	u32 wakes;
+	u32 pls_hist[MAX_STOP_STATE + 1];
+	u32 last_pls;
+	u32 max_pls;
+	u32 srr1_noloss;
+	u32 srr1_gprloss;
+	u32 srr1_hvloss;
+	u32 deep_wakes;
+	u32 restore_skipped;
+};
+
+static DEFINE_PER_CPU(struct pnv_hp_pls, pnv_hp_pls);
+
+static bool pnv_hotplug_spr_restore __read_mostly = true;
+
+static void pnv_hp_pls_record(unsigned long pls, unsigned long srr1,
+			      bool skipped)
+{
+	struct pnv_hp_pls *r = this_cpu_ptr(&pnv_hp_pls);
+
+	r->wakes++;
+	if (pls <= MAX_STOP_STATE)
+		r->pls_hist[pls]++;
+	r->last_pls = pls;
+	if (pls > r->max_pls)
+		r->max_pls = pls;
+
+	switch (srr1 & SRR1_WAKESTATE) {
+	case SRR1_WS_NOLOSS:
+		r->srr1_noloss++;
+		break;
+	case SRR1_WS_GPRLOSS:
+		r->srr1_gprloss++;
+		break;
+	case SRR1_WS_HVLOSS:
+		r->srr1_hvloss++;
+		break;
+	}
+	if (pls >= deep_spr_loss_state)
+		r->deep_wakes++;
+	if (skipped)
+		r->restore_skipped++;
+}
+
+static bool pnv_hp_skip_spr_restore(bool hotplug)
+{
+	return hotplug && !pnv_hotplug_spr_restore;
+}
+#else
+static inline void pnv_hp_pls_record(unsigned long pls, unsigned long srr1,
+				     bool skipped)
+{
+}
+
+static inline bool pnv_hp_skip_spr_restore(bool hotplug)
+{
+	return false;
+}
+#endif
+
+static unsigned long power9_idle_stop(unsigned long psscr, bool hotplug)
 {
 	int cpu = raw_smp_processor_id();
 	int first = cpu_first_thread_sibling(cpu);
@@ -618,6 +696,7 @@ static unsigned long power9_idle_stop(unsigned long psscr)
 	unsigned long mmcra = 0;
 	struct p9_sprs sprs = {}; /* avoid false used-uninitialised */
 	bool sprs_saved = false;
+	bool skip_spr_restore = pnv_hp_skip_spr_restore(hotplug);
 
 	if (!(psscr & (PSSCR_EC|PSSCR_ESL))) {
 		/* EC=ESL=0 case */
@@ -707,10 +786,12 @@ static unsigned long power9_idle_stop(unsigned long psscr)
 		 * We don't need an isync after the mtsprs here because the
 		 * upcoming mtmsrd is execution synchronizing.
 		 */
-		mtspr(SPRN_AMR,		sprs.amr);
-		mtspr(SPRN_IAMR,	sprs.iamr);
-		mtspr(SPRN_AMOR,	~0);
-		mtspr(SPRN_UAMOR,	sprs.uamor);
+		if (!skip_spr_restore) {
+			mtspr(SPRN_AMR,		sprs.amr);
+			mtspr(SPRN_IAMR,	sprs.iamr);
+			mtspr(SPRN_AMOR,	~0);
+			mtspr(SPRN_UAMOR,	sprs.uamor);
+		}
 
 		/*
 		 * Workaround for POWER9 DD2.0, if we lost resources, the ERAT
@@ -742,6 +823,10 @@ static unsigned long power9_idle_stop(unsigned long psscr)
 	 * just always test PSSCR for SPR/TB state loss.
 	 */
 	pls = (psscr & PSSCR_PLS) >> PSSCR_PLS_SHIFT;
+	if (hotplug)
+		pnv_hp_pls_record(pls, srr1,
+				  skip_spr_restore &&
+				  pls >= deep_spr_loss_state);
 	if (likely(pls < deep_spr_loss_state)) {
 		if (sprs_saved)
 			atomic_stop_thread_idle();
@@ -757,9 +842,11 @@ static unsigned long power9_idle_stop(unsigned long psscr)
 		goto core_woken;
 
 	/* Per-core SPRs */
-	mtspr(SPRN_PTCR,	sprs.ptcr);
-	mtspr(SPRN_RPR,		sprs.rpr);
-	mtspr(SPRN_TSCR,	sprs.tscr);
+	if (!skip_spr_restore) {
+		mtspr(SPRN_PTCR,	sprs.ptcr);
+		mtspr(SPRN_RPR,		sprs.rpr);
+		mtspr(SPRN_TSCR,	sprs.tscr);
+	}
 
 	if (pls >= pnv_first_tb_loss_level) {
 		/* TB loss */
@@ -778,23 +865,25 @@ core_woken:
 	atomic_unlock_and_stop_thread_idle();
 
 	/* Per-thread SPRs */
-	mtspr(SPRN_LPCR,	sprs.lpcr);
-	mtspr(SPRN_HFSCR,	sprs.hfscr);
-	mtspr(SPRN_FSCR,	sprs.fscr);
-	mtspr(SPRN_PID,		sprs.pid);
-	mtspr(SPRN_PURR,	sprs.purr);
-	mtspr(SPRN_SPURR,	sprs.spurr);
-	mtspr(SPRN_DSCR,	sprs.dscr);
-	mtspr(SPRN_CIABR,	sprs.ciabr);
+	if (!skip_spr_restore) {
+		mtspr(SPRN_LPCR,	sprs.lpcr);
+		mtspr(SPRN_HFSCR,	sprs.hfscr);
+		mtspr(SPRN_FSCR,	sprs.fscr);
+		mtspr(SPRN_PID,		sprs.pid);
+		mtspr(SPRN_PURR,	sprs.purr);
+		mtspr(SPRN_SPURR,	sprs.spurr);
+		mtspr(SPRN_DSCR,	sprs.dscr);
+		mtspr(SPRN_CIABR,	sprs.ciabr);
 
-	mtspr(SPRN_MMCRA,	sprs.mmcra);
-	mtspr(SPRN_MMCR0,	sprs.mmcr0);
-	mtspr(SPRN_MMCR1,	sprs.mmcr1);
-	mtspr(SPRN_MMCR2,	sprs.mmcr2);
-	if (!firmware_has_feature(FW_FEATURE_ULTRAVISOR))
-		mtspr(SPRN_LDBAR, sprs.ldbar);
+		mtspr(SPRN_MMCRA,	sprs.mmcra);
+		mtspr(SPRN_MMCR0,	sprs.mmcr0);
+		mtspr(SPRN_MMCR1,	sprs.mmcr1);
+		mtspr(SPRN_MMCR2,	sprs.mmcr2);
+		if (!firmware_has_feature(FW_FEATURE_ULTRAVISOR))
+			mtspr(SPRN_LDBAR, sprs.ldbar);
 
-	mtspr(SPRN_SPRG3,	local_paca->sprg_vdso);
+		mtspr(SPRN_SPRG3,	local_paca->sprg_vdso);
+	}
 
 	if (!radix_enabled())
 		__slb_restore_bolted_realmode();
@@ -998,7 +1087,7 @@ static unsigned long arch300_offline_stop(unsigned long psscr)
 	if (cpu_has_feature(CPU_FTR_ARCH_31))
 		srr1 = power10_idle_stop(psscr);
 	else
-		srr1 = power9_idle_stop(psscr);
+		srr1 = power9_idle_stop(psscr, true);
 
 	return srr1;
 }
@@ -1020,7 +1109,7 @@ void arch300_idle_type(unsigned long stop_psscr_val,
 	if (cpu_has_feature(CPU_FTR_ARCH_31))
 		srr1 = power10_idle_stop(psscr);
 	else
-		srr1 = power9_idle_stop(psscr);
+		srr1 = power9_idle_stop(psscr, false);
 	__ppc64_runlatch_on();
 
 	fini_irq_for_idle_irqsoff();
@@ -1506,3 +1595,105 @@ out:
 	return 0;
 }
 machine_subsys_initcall(powernv, pnv_init_idle_states);
+
+#ifdef CONFIG_HOTPLUG_CPU
+static void pnv_hp_pls_print(unsigned int cpu)
+{
+	struct pnv_hp_pls *r = per_cpu_ptr(&pnv_hp_pls, cpu);
+	char buf[160];
+	int i, n = 0;
+
+	if (!r->wakes)
+		return;
+
+	buf[0] = '\0';
+	for (i = 0; i <= MAX_STOP_STATE; i++) {
+		if (!r->pls_hist[i])
+			continue;
+		n += scnprintf(buf + n, sizeof(buf) - n, " %d=%u", i,
+			       r->pls_hist[i]);
+	}
+
+	pr_info("cpu %u hotplug: wakes=%u last_pls=%u max_pls=%u deep_spr_loss=0x%llx restore=%d skipped=%u deep=%u srr1(noloss/gpr/hv)=%u/%u/%u pls:%s\n",
+		cpu, r->wakes, r->last_pls, r->max_pls, deep_spr_loss_state,
+		pnv_hotplug_spr_restore, r->restore_skipped, r->deep_wakes,
+		r->srr1_noloss, r->srr1_gprloss, r->srr1_hvloss, buf);
+}
+
+static int pnv_hp_pls_online(unsigned int cpu)
+{
+	pnv_hp_pls_print(cpu);
+	return 0;
+}
+
+#ifdef CONFIG_DEBUG_FS
+static int pnv_hp_pls_show(struct seq_file *m, void *v)
+{
+	int cpu, i;
+
+	seq_printf(m, "spr_restore %d deep_spr_loss_state 0x%llx first_tb_loss 0x%llx deepest_psscr 0x%llx\n",
+		   pnv_hotplug_spr_restore, deep_spr_loss_state,
+		   pnv_first_tb_loss_level, pnv_deepest_stop_psscr_val);
+
+	for_each_present_cpu(cpu) {
+		struct pnv_hp_pls *r = per_cpu_ptr(&pnv_hp_pls, cpu);
+
+		if (!r->wakes)
+			continue;
+		seq_printf(m, "cpu %d: wakes %u last_pls %u max_pls %u skipped %u deep %u srr1 noloss=%u gprloss=%u hvloss=%u\n",
+			   cpu, r->wakes, r->last_pls, r->max_pls,
+			   r->restore_skipped, r->deep_wakes,
+			   r->srr1_noloss, r->srr1_gprloss, r->srr1_hvloss);
+		seq_puts(m, "  pls:");
+		for (i = 0; i <= MAX_STOP_STATE; i++)
+			if (r->pls_hist[i])
+				seq_printf(m, " %d=%u", i, r->pls_hist[i]);
+		seq_puts(m, "\n");
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(pnv_hp_pls);
+
+static int pnv_hp_pls_reset_set(void *data, u64 val)
+{
+	int cpu;
+
+	if (!val)
+		return 0;
+	for_each_present_cpu(cpu)
+		memset(per_cpu_ptr(&pnv_hp_pls, cpu), 0,
+		       sizeof(struct pnv_hp_pls));
+	return 0;
+}
+DEFINE_DEBUGFS_ATTRIBUTE(pnv_hp_pls_reset_fops, NULL, pnv_hp_pls_reset_set,
+			 "%llu\n");
+
+static void __init pnv_hp_pls_debugfs_init(void)
+{
+	struct dentry *dir;
+
+	dir = debugfs_create_dir("pnv_hotplug_idle", arch_debugfs_dir);
+	debugfs_create_bool("spr_restore", 0600, dir, &pnv_hotplug_spr_restore);
+	debugfs_create_file("pls", 0400, dir, NULL, &pnv_hp_pls_fops);
+	debugfs_create_file("reset", 0200, dir, NULL, &pnv_hp_pls_reset_fops);
+}
+#else
+static void __init pnv_hp_pls_debugfs_init(void)
+{
+}
+#endif
+
+static int __init pnv_hp_pls_init(void)
+{
+	int rc;
+
+	pnv_hp_pls_debugfs_init();
+	rc = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "powerpc/powernv:hp_pls",
+			       pnv_hp_pls_online, NULL);
+	if (rc < 0)
+		pr_warn("powernv: failed to register hotplug PLS notifier (%d)\n",
+			rc);
+	return 0;
+}
+machine_subsys_initcall(powernv, pnv_hp_pls_init);
+#endif /* CONFIG_HOTPLUG_CPU */
