@@ -66,9 +66,6 @@ if [ ! -d "$SYSFS" ]; then
 	exit 1
 fi
 
-# Pin ourselves to CPU 0 so we never offlined the CPU we are running on.
-taskset -pc 0 $$ >/dev/null
-
 expand_list() {
 	local spec=$1 tok
 	IFS=',' read -ra toks <<< "$spec"
@@ -176,6 +173,28 @@ online_core() {
 	done
 }
 
+try_pin() {
+	local cpu=$1
+	taskset -p -c "$cpu" $$ >/dev/null 2>&1 && return 0
+	taskset -c "$cpu" -p $$ >/dev/null 2>&1 && return 0
+	return 1
+}
+
+# Run on a CPU that is not in the core we are about to offline.
+pin_self() {
+	local cpu
+	for cpu in $(expand_list "$(cat $SYSFS/online)"); do
+		if echo "$THREADS" | grep -qx "$cpu"; then
+			continue
+		fi
+		if try_pin "$cpu"; then
+			echo "pinned to cpu$cpu"
+			return 0
+		fi
+	done
+	echo "warning: could not pin affinity; do not offline this shell's CPU" >&2
+}
+
 if [ "$SKIP_SPR" != 0 ]; then
 	RESTORE=1
 	echo "omit SPR #$SKIP_SPR only (spr_restore forced on)"
@@ -196,6 +215,8 @@ THREADS=$(expand_list "$SIBS")
 echo "target cpu$CPU core threads: $SIBS"
 echo "present=$(cat $SYSFS/present) online=$(cat $SYSFS/online)"
 dmesg | grep -E 'Deepest stop|lose SPRs|lose timebase' || true
+
+pin_self
 
 if echo "$THREADS" | grep -qx 0; then
 	echo "refusing to offline CPU 0's core" >&2
