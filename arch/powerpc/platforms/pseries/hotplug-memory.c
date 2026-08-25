@@ -896,15 +896,23 @@ static int pseries_memory_notifier(struct notifier_block *nb,
 
 	switch (action) {
 	case OF_RECONFIG_ATTACH_NODE:
+		pr_info("OF attach memory node %pOF\n", rd->dn);
 		err = pseries_add_mem_node(rd->dn);
 		break;
 	case OF_RECONFIG_DETACH_NODE:
+		pr_info("OF detach memory node %pOF\n", rd->dn);
 		err = pseries_remove_mem_node(rd->dn);
 		break;
 	case OF_RECONFIG_UPDATE_PROPERTY:
 		if (!strcmp(rd->dn->name,
-			    "ibm,dynamic-reconfiguration-memory"))
-			drmem_update_lmbs(rd->prop);
+			    "ibm,dynamic-reconfiguration-memory") ||
+		    of_node_is_type(rd->dn, "memory")) {
+			pr_info("OF update %pOF property %s\n", rd->dn,
+				rd->prop ? rd->prop->name : "(null)");
+			if (!strcmp(rd->dn->name,
+				    "ibm,dynamic-reconfiguration-memory"))
+				drmem_update_lmbs(rd->prop);
+		}
 	}
 	return notifier_from_errno(err);
 }

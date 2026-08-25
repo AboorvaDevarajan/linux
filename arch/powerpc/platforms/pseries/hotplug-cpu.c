@@ -261,6 +261,9 @@ static int pseries_add_processor(struct device_node *np)
 		set_hard_smp_processor_id(cpu, be32_to_cpu(*intserv++));
 	}
 
+	pr_info("add processor %pOF dt_nid=%d id_alloc_nid=%d cpus=%*pbl\n",
+		np, assigned_node, node, cpumask_pr_args(cpu_mask));
+
 	/* Record the newly used CPU ids for the associate node. */
 	cpumask_or(node_recorded_ids_map[assigned_node],
 		   node_recorded_ids_map[assigned_node], cpu_mask);
@@ -843,9 +846,12 @@ static int pseries_smp_notifier(struct notifier_block *nb,
 
 	switch (action) {
 	case OF_RECONFIG_ATTACH_NODE:
+		pr_info("OF attach CPU node %pOF nid=%d\n",
+			rd->dn, of_node_to_nid(rd->dn));
 		err = pseries_add_processor(rd->dn);
 		break;
 	case OF_RECONFIG_DETACH_NODE:
+		pr_info("OF detach CPU node %pOF\n", rd->dn);
 		pseries_remove_processor(rd->dn);
 		break;
 	}

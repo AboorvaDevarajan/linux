@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/kobject.h>
 #include <linux/nmi.h>
+#include <linux/of.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/stat.h>
@@ -21,11 +22,14 @@
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/stringify.h>
 
+#include <asm/hvcall.h>
 #include <asm/machdep.h>
 #include <asm/nmi.h>
 #include <asm/rtas.h>
+#include <asm/topology.h>
 #include "pseries.h"
 #include "vas.h"	/* vas_migration_handler() */
 #include "papr-hvpipe.h"	/* hvpipe_migration_handler() */
@@ -49,6 +53,148 @@ struct update_props_workarea {
 
 #define MIGRATION_SCOPE	(1)
 #define PRRN_SCOPE -2
+
+static const char *vasi_state_name(unsigned long state)
+{
+	switch (state) {
+	case H_VASI_INVALID:
+		return "INVALID";
+	case H_VASI_ENABLED:
+		return "ENABLED";
+	case H_VASI_ABORTED:
+		return "ABORTED";
+	case H_VASI_SUSPENDING:
+		return "SUSPENDING";
+	case H_VASI_SUSPENDED:
+		return "SUSPENDED";
+	case H_VASI_RESUMED:
+		return "RESUMED";
+	case H_VASI_COMPLETED:
+		return "COMPLETED";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static const char *dt_action_name(u32 action)
+{
+	switch (action) {
+	case DELETE_DT_NODE:
+		return "DELETE";
+	case UPDATE_DT_NODE:
+		return "UPDATE";
+	case ADD_DT_NODE:
+		return "ADD";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static bool numa_related_prop(const char *name)
+{
+	return strstr(name, "associativ") ||
+	       strstr(name, "numa") ||
+	       !strcmp(name, "ibm,dynamic-memory") ||
+	       !strcmp(name, "ibm,dynamic-memory-v2") ||
+	       !strcmp(name, "ibm,chip-id");
+}
+
+static void log_dt_prop_cells(const char *when, struct device_node *dn,
+			      const char *name, const void *value, u32 len)
+{
+	const __be32 *p = value;
+	unsigned int n = len / sizeof(__be32);
+	unsigned int i, show = min(n, 8u);
+	char buf[96];
+	int pos = 0;
+
+	buf[0] = '\0';
+	for (i = 0; i < show && pos < sizeof(buf) - 12; i++)
+		pos += scnprintf(buf + pos, sizeof(buf) - pos, " %u",
+				 be32_to_cpu(p[i]));
+
+	pr_info("DT[%s] %pOF %s len=%u cells=%u:%s%s\n",
+		when, dn, name, len, n, buf, n > show ? " ..." : "");
+}
+
+static void dump_named_prop(const char *when, struct device_node *dn,
+			    const char *name)
+{
+	const void *val;
+	int len;
+
+	val = of_get_property(dn, name, &len);
+	if (!val) {
+		pr_info("DT[%s] %pOF %s: <absent>\n", when, dn, name);
+		return;
+	}
+
+	log_dt_prop_cells(when, dn, name, val, len);
+}
+
+/*
+ * Snapshot the NUMA-relevant live device tree. LPM does not replace
+ * the whole tree; ibm,update-nodes applies destination deltas. Compare
+ * the before/after snapshots to see which associativity properties
+ * actually changed.
+ */
+static void dump_lpm_devicetree(const char *when)
+{
+	struct device_node *dn, *cpus, *child;
+
+	pr_info("DT snapshot [%s]: begin\n", when);
+
+	dn = of_find_node_by_path("/");
+	if (dn) {
+		dump_named_prop(when, dn, "ibm,migratable-partition");
+		dump_named_prop(when, dn, "ibm,numa-lookup-index-table");
+		dump_named_prop(when, dn, "ibm,numa-distance-table");
+		of_node_put(dn);
+	}
+
+	dn = of_find_node_by_path("/rtas");
+	if (dn) {
+		dump_named_prop(when, dn, "ibm,associativity-reference-points");
+		dump_named_prop(when, dn, "ibm,current-associativity-domains");
+		dump_named_prop(when, dn, "ibm,max-associativity-domains");
+		of_node_put(dn);
+	}
+
+	dn = of_find_node_by_path("/ibm,dynamic-reconfiguration-memory");
+	if (dn) {
+		dump_named_prop(when, dn, "ibm,lmb-size");
+		dump_named_prop(when, dn, "ibm,associativity-lookup-arrays");
+		dump_named_prop(when, dn, "ibm,dynamic-memory");
+		dump_named_prop(when, dn, "ibm,dynamic-memory-v2");
+		of_node_put(dn);
+	} else {
+		pr_info("DT[%s] /ibm,dynamic-reconfiguration-memory: <absent>\n",
+			when);
+	}
+
+	cpus = of_find_node_by_path("/cpus");
+	if (cpus) {
+		for_each_child_of_node(cpus, child) {
+			if (!of_get_property(child,
+					     "ibm,ppc-interrupt-server#s",
+					     NULL))
+				continue;
+
+			dump_named_prop(when, child, "ibm,associativity");
+			dump_named_prop(when, child, "ibm,chip-id");
+			dump_named_prop(when, child,
+					"ibm,ppc-interrupt-server#s");
+		}
+		of_node_put(cpus);
+	}
+
+	for_each_node_by_type(dn, "memory") {
+		dump_named_prop(when, dn, "reg");
+		dump_named_prop(when, dn, "ibm,associativity");
+	}
+
+	pr_info("DT snapshot [%s]: end\n", when);
+}
 
 #ifdef CONFIG_PPC_WATCHDOG
 static unsigned int nmi_wd_lpm_factor = 200;
@@ -111,7 +257,7 @@ static int delete_dt_node(struct device_node *dn)
 		return 0;
 	}
 
-	pr_debug("removing node %pOFfp\n", dn);
+	pr_info("DT DELETE node %pOFfp\n", dn);
 	dlpar_detach_node(dn);
 	return 0;
 }
@@ -169,7 +315,11 @@ static int update_dt_property(struct device_node *dn, struct property **prop,
 	}
 
 	if (!more) {
-		pr_debug("updating node %pOF property %s\n", dn, name);
+		pr_info("DT UPDATE node %pOF property %s len=%d\n",
+			dn, name, new_prop->length);
+		if (numa_related_prop(name))
+			log_dt_prop_cells("update", dn, name, new_prop->value,
+					  new_prop->length);
 		of_update_property(dn, new_prop);
 		*prop = NULL;
 	}
@@ -234,6 +384,8 @@ static int update_dt_node(struct device_node *dn, s32 scope)
 				break;
 
 			case 0x80000000:
+				pr_info("DT REMOVE prop %pOF %s\n", dn,
+					prop_name);
 				of_remove_property(dn, of_find_property(dn,
 							prop_name, NULL));
 				prop = NULL;
@@ -287,7 +439,7 @@ static int add_dt_node(struct device_node *parent_dn, __be32 drc_index)
 	if (rc)
 		dlpar_free_cc_nodes(dn);
 
-	pr_debug("added node %pOFfp\n", dn);
+	pr_info("DT ADD node %pOFfp rc=%d\n", dn, rc);
 
 	return rc;
 }
@@ -300,8 +452,13 @@ static int pseries_devicetree_update(s32 scope)
 	int rc;
 
 	update_nodes_token = rtas_function_token(RTAS_FN_IBM_UPDATE_NODES);
-	if (update_nodes_token == RTAS_UNKNOWN_SERVICE)
+	if (update_nodes_token == RTAS_UNKNOWN_SERVICE) {
+		pr_info("ibm,update-nodes not available, skipping DT update (scope=%d)\n",
+			scope);
 		return 0;
+	}
+
+	pr_info("ibm,update-nodes start scope=%d\n", scope);
 
 	rtas_buf = kzalloc(RTAS_DATA_BUF_SIZE, GFP_KERNEL);
 	if (!rtas_buf)
@@ -332,6 +489,9 @@ static int pseries_devicetree_update(s32 scope)
 					continue;
 				}
 
+				pr_info("DT %s %pOFfp action=0x%x\n",
+					dt_action_name(action), np, action);
+
 				switch (action) {
 				case DELETE_DT_NODE:
 					delete_dt_node(np);
@@ -341,6 +501,8 @@ static int pseries_devicetree_update(s32 scope)
 					break;
 				case ADD_DT_NODE:
 					drc_index = *data++;
+					pr_info("DT ADD child of %pOFfp drc=0x%x\n",
+						np, be32_to_cpu(drc_index));
 					add_dt_node(np, drc_index);
 					break;
 				}
@@ -354,6 +516,7 @@ static int pseries_devicetree_update(s32 scope)
 	} while (rc == 1);
 
 	kfree(rtas_buf);
+	pr_info("ibm,update-nodes done rc=%d\n", rc);
 	return rc;
 }
 
@@ -361,6 +524,10 @@ void post_mobility_fixup(void)
 {
 	int rc;
 
+	pr_info("%s: begin destination fixups\n", __func__);
+	dump_numa_lpm_state("before-activate-firmware");
+
+	pr_info("%s: rtas_activate_firmware\n", __func__);
 	rtas_activate_firmware();
 
 	/*
@@ -374,23 +541,35 @@ void post_mobility_fixup(void)
 	 * nodes.  Release all of the cacheinfo hierarchy's references
 	 * before updating the device tree.
 	 */
+	pr_info("%s: cacheinfo_teardown\n", __func__);
 	cacheinfo_teardown();
 
+	dump_numa_lpm_state("before-dt-update");
+	dump_lpm_devicetree("before-dt-update");
+	pr_info("%s: apply destination DT (ibm,update-nodes)\n", __func__);
 	rc = pseries_devicetree_update(MIGRATION_SCOPE);
 	if (rc)
 		pr_err("device tree update failed: %d\n", rc);
+	else
+		pr_info("%s: device tree update complete\n", __func__);
+	dump_lpm_devicetree("after-dt-update");
+	dump_numa_lpm_state("after-dt-update");
 
+	pr_info("%s: cacheinfo_rebuild\n", __func__);
 	cacheinfo_rebuild();
 
 	cpus_read_unlock();
 
 	/* Possibly switch to a new L1 flush type */
+	pr_info("%s: pseries_setup_security_mitigations\n", __func__);
 	pseries_setup_security_mitigations();
 
 	/* Reinitialise system information for hv-24x7 */
+	pr_info("%s: read_24x7_sys_info\n", __func__);
 	read_24x7_sys_info();
 
-	return;
+	dump_numa_lpm_state("after-post-mobility-fixup");
+	pr_info("%s: destination fixups complete\n", __func__);
 }
 
 static int poll_vasi_state(u64 handle, unsigned long *res)
@@ -425,12 +604,17 @@ static int wait_for_vasi_session_suspending(u64 handle)
 	unsigned long state;
 	int ret;
 
+	pr_info("wait for VASI SUSPENDING, handle=0x%llx\n", handle);
+
 	/*
 	 * Wait for transition from H_VASI_ENABLED to
 	 * H_VASI_SUSPENDING. Treat anything else as an error.
 	 */
 	while (true) {
 		ret = poll_vasi_state(handle, &state);
+		if (!ret)
+			pr_info("VASI wait-suspend: %s (%lu)\n",
+				vasi_state_name(state), state);
 
 		if (ret != 0 || state == H_VASI_SUSPENDING) {
 			break;
@@ -447,8 +631,13 @@ static int wait_for_vasi_session_suspending(u64 handle)
 	 * Proceed even if H_VASI_STATE is unavailable. If H_JOIN or
 	 * ibm,suspend-me are also unimplemented, we'll recover then.
 	 */
-	if (ret == -EOPNOTSUPP)
+	if (ret == -EOPNOTSUPP) {
+		pr_info("H_VASI_STATE unsupported, continuing suspend\n");
 		ret = 0;
+	} else if (!ret) {
+		pr_info("VASI now %s, ready to suspend\n",
+			vasi_state_name(state));
+	}
 
 	return ret;
 }
@@ -458,7 +647,8 @@ static void wait_for_vasi_session_completed(u64 handle)
 	unsigned long state = 0;
 	int ret;
 
-	pr_info("waiting for memory transfer to complete...\n");
+	pr_info("waiting for memory transfer to complete, handle=0x%llx\n",
+		handle);
 
 	/*
 	 * Wait for transition from H_VASI_RESUMED to H_VASI_COMPLETED.
@@ -684,9 +874,14 @@ static int pseries_suspend(u64 handle)
 			.done = false,
 		};
 
+		pr_info("%s: attempt %u/%u on %u CPUs\n",
+			__func__, attempt, max_attempts, num_online_cpus());
 		ret = stop_machine(do_join, &info, cpu_online_mask);
-		if (ret == 0)
+		if (ret == 0) {
+			pr_info("%s: succeeded on attempt %u\n",
+				__func__, attempt);
 			break;
+		}
 		/*
 		 * Encountered an error. If the VASI stream is still
 		 * in Suspending state, it's likely a transient
@@ -744,18 +939,29 @@ static int pseries_migrate_partition(u64 handle)
 	 * faults from the migration event. So reduce this time window
 	 * by closing VAS windows at the beginning of this function.
 	 */
+	pr_info("LPM start handle=0x%llx cpu=%i online_cpus=%u\n",
+		handle, smp_processor_id(), num_online_cpus());
+	dump_numa_lpm_state("lpm-start");
+	dump_lpm_devicetree("lpm-start");
+
+	pr_info("LPM: close VAS windows (VAS_SUSPEND)\n");
 	vas_migration_handler(VAS_SUSPEND);
+	pr_info("LPM: hvpipe suspend\n");
 	hvpipe_migration_handler(HVPIPE_SUSPEND);
 
 	ret = wait_for_vasi_session_suspending(handle);
-	if (ret)
+	if (ret) {
+		pr_err("LPM: VASI did not reach SUSPENDING (%d)\n", ret);
 		goto out;
+	}
 
 	if (factor)
 		watchdog_hardlockup_set_timeout_pct(factor);
 
+	pr_info("LPM: enter pseries_suspend (H_JOIN + ibm,suspend-me)\n");
 	ret = pseries_suspend(handle);
 	if (ret == 0) {
+		pr_info("LPM: resumed on destination, run post_mobility_fixup\n");
 		post_mobility_fixup();
 		/*
 		 * Wait until the memory transfer is complete, so that the user
@@ -764,15 +970,23 @@ static int pseries_migrate_partition(u64 handle)
 		 * right time.
 		 */
 		wait_for_vasi_session_completed(handle);
-	} else
+	} else {
+		pr_err("LPM: suspend failed (%d), cancel migration\n", ret);
 		pseries_cancel_migration(handle, ret);
+	}
 
 	if (factor)
 		watchdog_hardlockup_set_timeout_pct(0);
 
 out:
+	pr_info("LPM: reopen VAS windows (VAS_RESUME)\n");
 	vas_migration_handler(VAS_RESUME);
+	pr_info("LPM: hvpipe resume\n");
 	hvpipe_migration_handler(HVPIPE_RESUME);
+
+	dump_numa_lpm_state("lpm-end");
+	dump_lpm_devicetree("lpm-end");
+	pr_info("LPM end handle=0x%llx rc=%d\n", handle, ret);
 
 	return ret;
 }

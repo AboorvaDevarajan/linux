@@ -41,6 +41,7 @@ extern int __node_distance(int, int);
 #define node_distance(a, b) __node_distance(a, b)
 
 extern void __init dump_numa_cpu_topology(void);
+void dump_numa_lpm_state(const char *when);
 
 extern int sysfs_add_device_to_node(struct device *dev, int nid);
 extern void sysfs_remove_device_from_node(struct device *dev, int nid);
@@ -76,6 +77,7 @@ extern void unmap_cpu_from_node(unsigned long cpu);
 static inline int early_cpu_to_node(int cpu) { return 0; }
 
 static inline void dump_numa_cpu_topology(void) {}
+static inline void dump_numa_lpm_state(const char *when) {}
 
 static inline int sysfs_add_device_to_node(struct device *dev, int nid)
 {

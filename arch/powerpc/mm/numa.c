@@ -341,21 +341,27 @@ void update_numa_distance(struct device_node *node)
 {
 	int nid;
 
+	nid = of_node_to_nid_single(node);
+	pr_info("%s: node=%pOF form=%d nid=%d\n",
+		__func__, node, affinity_form, nid);
+
 	if (affinity_form == FORM0_AFFINITY)
 		return;
 	else if (affinity_form == FORM1_AFFINITY) {
 		const __be32 *associativity;
 
 		associativity = of_get_associativity(node);
-		if (!associativity)
+		if (!associativity) {
+			pr_info("%s: %pOF has no ibm,associativity\n",
+				__func__, node);
 			return;
+		}
 
 		initialize_form1_numa_distance(associativity);
 		return;
 	}
 
 	/* FORM2 affinity  */
-	nid = of_node_to_nid_single(node);
 	if (nid == NUMA_NO_NODE)
 		return;
 
@@ -1089,6 +1095,83 @@ void __init dump_numa_cpu_topology(void)
 	}
 }
 
+/*
+ * Runtime NUMA snapshot for Live Partition Mobility. Compare linux_nid
+ * (scheduler / cpu_to_node), lookup (numa_cpu_lookup_table), dt_nid
+ * (ibm,associativity on the CPU node after ibm,update-properties), and
+ * vphn_nid (H_HOME_NODE_ASSOCIATIVITY). After LPM the DT and VPHN views
+ * can change without linux_nid being rewritten.
+ */
+void dump_numa_lpm_state(const char *when)
+{
+	unsigned int node, cpu;
+	const char *form;
+	int nid_lmbs[MAX_NUMNODES] = { };
+	int unknown_lmbs = 0, assigned = 0;
+	struct drmem_lmb *lmb;
+
+	if (!numa_enabled) {
+		pr_info("LPM snapshot [%s]: NUMA disabled\n", when);
+		return;
+	}
+
+	if (affinity_form == FORM2_AFFINITY)
+		form = "FORM2";
+	else if (affinity_form == FORM1_AFFINITY)
+		form = "FORM1";
+	else
+		form = "FORM0";
+
+	pr_info("LPM snapshot [%s]: form=%s possible=%*pbl online=%*pbl\n",
+		when, form, nodemask_pr_args(&node_possible_map),
+		nodemask_pr_args(&node_online_map));
+
+	for_each_online_node(node)
+		pr_info("  node %u: cpus=%*pbl present_pages=%lu\n",
+			node, cpumask_pr_args(cpumask_of_node(node)),
+			node_present_pages(node));
+
+	for_each_online_cpu(cpu) {
+		struct device_node *dn = of_get_cpu_node(cpu, NULL);
+		int dt_nid = NUMA_NO_NODE;
+		int vphn_nid = vphn_get_nid(cpu);
+
+		if (dn) {
+			dt_nid = of_node_to_nid_single(dn);
+			of_node_put(dn);
+		}
+
+		pr_info("  cpu %u: linux_nid=%d lookup=%d dt_nid=%d vphn_nid=%d\n",
+			cpu, cpu_to_node(cpu), numa_cpu_lookup_table[cpu],
+			dt_nid, vphn_nid);
+	}
+
+	if (!drmem_info || !drmem_info->n_lmbs)
+		return;
+
+	for_each_drmem_lmb(lmb) {
+		int nid;
+
+		if (!(lmb->flags & DRCONF_MEM_ASSIGNED))
+			continue;
+
+		assigned++;
+		nid = of_drconf_to_nid_single(lmb);
+		if (nid < 0 || nid >= MAX_NUMNODES)
+			unknown_lmbs++;
+		else
+			nid_lmbs[nid]++;
+	}
+
+	pr_info("  assigned LMBs: %d (unknown nid: %d)\n",
+		assigned, unknown_lmbs);
+	for_each_node(node) {
+		if (nid_lmbs[node])
+			pr_info("  LMB nid %u: %d blocks\n", node,
+				nid_lmbs[node]);
+	}
+}
+
 /* Initialize NODE_DATA for a node on the local memory */
 static void __init setup_node_data(int nid, u64 start_pfn, u64 end_pfn)
 {
@@ -1412,11 +1495,15 @@ out:
 void find_and_update_cpu_nid(int cpu)
 {
 	__be32 associativity[VPHN_ASSOC_BUFSIZE] = {0};
+	int old_nid = cpu_to_node(cpu);
 	int new_nid;
 
 	/* Use associativity from first thread for all siblings */
-	if (vphn_get_associativity(cpu, associativity))
+	if (vphn_get_associativity(cpu, associativity)) {
+		pr_info("VPHN update cpu %d: hcall failed, linux_nid=%d\n",
+			cpu, old_nid);
 		return;
+	}
 
 	/* Do not have previous associativity, so find it now. */
 	new_nid = associativity_to_nid(associativity);
@@ -1428,7 +1515,8 @@ void find_and_update_cpu_nid(int cpu)
 		// try_online_node() on the right node.
 		set_cpu_numa_node(cpu, new_nid);
 
-	pr_debug("%s:%d cpu %d nid %d\n", __func__, __LINE__, cpu, new_nid);
+	pr_info("VPHN update cpu %d linux_nid %d -> %d\n",
+		cpu, old_nid, new_nid);
 }
 
 int cpu_to_coregroup_id(int cpu)

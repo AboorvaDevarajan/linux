@@ -317,6 +317,8 @@ int __init walk_drmem_lmbs_early(unsigned long node, void *data,
 /*
  * Update the LMB associativity index.
  */
+static unsigned int lmb_aa_changes;
+
 static int update_lmb(struct drmem_lmb *updated_lmb,
 		      __maybe_unused const __be32 **usm,
 		      __maybe_unused void *data)
@@ -327,6 +329,12 @@ static int update_lmb(struct drmem_lmb *updated_lmb,
 		if (lmb->drc_index != updated_lmb->drc_index)
 			continue;
 
+		if (lmb->aa_index != updated_lmb->aa_index) {
+			pr_info("LMB aa_index change: drc=0x%x base=0x%llx %u -> %u\n",
+				lmb->drc_index, lmb->base_addr,
+				lmb->aa_index, updated_lmb->aa_index);
+			lmb_aa_changes++;
+		}
 		lmb->aa_index = updated_lmb->aa_index;
 		break;
 	}
@@ -348,10 +356,19 @@ void drmem_update_lmbs(struct property *prop)
 	 */
 	if (in_drmem_update)
 		return;
+
+	lmb_aa_changes = 0;
+	pr_info("updating LMBs from DT property %s (len=%d)\n",
+		prop->name, prop->length);
+
 	if (!strcmp(prop->name, "ibm,dynamic-memory"))
 		__walk_drmem_v1_lmbs(prop->value, NULL, NULL, update_lmb);
 	else if (!strcmp(prop->name, "ibm,dynamic-memory-v2"))
 		__walk_drmem_v2_lmbs(prop->value, NULL, NULL, update_lmb);
+	else
+		pr_info("ignoring non-LMB property %s\n", prop->name);
+
+	pr_info("LMB aa_index updates: %u changed\n", lmb_aa_changes);
 }
 #endif
 
