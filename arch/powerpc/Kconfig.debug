@@ -371,3 +371,14 @@ config KASAN_SHADOW_OFFSET
 	default 0xe0000000 if PPC32
 	default 0xa80e000000000000 if PPC_BOOK3S_64
 	default 0xa8001c0000000000 if PPC_BOOK3E_64
+
+config CPUIDLE_LATENCY_SELFTEST
+	tristate "Cpuidle wakeup latency selftest"
+	depends on CPU_IDLE && DEBUG_FS && SMP
+	help
+	  Build a module that sends a directed IPI to one CPU and measures
+	  how long that CPU took to wake up from its idle state and run the
+	  handler. The result is reported through debugfs and is consumed by
+	  the powerpc cpuidle_latency selftest.
+
+	  Say M if you want to run that selftest. If unsure, say N.
