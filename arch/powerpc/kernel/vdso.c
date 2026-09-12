@@ -141,7 +141,8 @@ static int __arch_setup_additional_pages(struct linux_binprm *bprm, int uses_int
 	 */
 	vma = _install_special_mapping(mm, vdso_base + vvar_size, vdso_size,
 				       VM_READ | VM_EXEC | VM_MAYREAD |
-				       VM_MAYWRITE | VM_MAYEXEC, vdso_spec);
+				       VM_MAYWRITE | VM_MAYEXEC |
+				       VM_SEALED_SYSMAP, vdso_spec);
 	if (IS_ERR(vma)) {
 		do_munmap(mm, vdso_base, vvar_size, NULL);
 		return PTR_ERR(vma);

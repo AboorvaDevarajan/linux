@@ -19,7 +19,7 @@
     |       nios2: |  N/A |
     |    openrisc: |  N/A |
     |      parisc: | TODO |
-    |     powerpc: | TODO |
+    |     powerpc: |  ok  |
     |       riscv: |  ok  |
     |        s390: |  ok  |
     |          sh: |  N/A |
