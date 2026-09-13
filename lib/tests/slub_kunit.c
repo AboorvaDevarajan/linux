@@ -465,6 +465,34 @@ static void test_kmalloc_nolock_and_friends_kprobe(struct kunit *test)
 }
 #endif
 
+#ifdef system_has_freelist_aba
+/*
+ * Check that SLUB enabled __CMPXCHG_DOUBLE and that a cache using it
+ * can alloc/free. This is not an ABA race test; the ISA check is
+ * CONFIG_PPC_CMPXCHG128_SELFTEST.
+ */
+static void test_freelist_aba(struct kunit *test)
+{
+	struct kmem_cache *s;
+	void *a, *b;
+
+	if (!system_has_freelist_aba())
+		kunit_skip(test, "128-bit cmpxchg not available on this CPU");
+
+	s = test_kmem_cache_create("TestSlub_aba", 64, 0);
+	KUNIT_ASSERT_NOT_NULL(test, s);
+	KUNIT_EXPECT_TRUE(test, s->flags & __SLAB_FLAG_BIT(_SLAB_CMPXCHG_DOUBLE));
+
+	a = kmem_cache_alloc(s, GFP_KERNEL);
+	b = kmem_cache_alloc(s, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, a);
+	KUNIT_ASSERT_NOT_NULL(test, b);
+	kmem_cache_free(s, b);
+	kmem_cache_free(s, a);
+	kmem_cache_destroy(s);
+}
+#endif
+
 static int test_init(struct kunit *test)
 {
 	slab_errors = 0;
@@ -489,6 +517,9 @@ static struct kunit_case test_cases[] = {
 	KUNIT_CASE(test_kfree_rcu_wq_destroy),
 	KUNIT_CASE(test_leak_destroy),
 	KUNIT_CASE(test_krealloc_redzone_zeroing),
+#ifdef system_has_freelist_aba
+	KUNIT_CASE(test_freelist_aba),
+#endif
 #ifdef CONFIG_PERF_EVENTS
 	KUNIT_CASE_SLOW(test_kmalloc_nolock_and_friends_perf),
 #endif

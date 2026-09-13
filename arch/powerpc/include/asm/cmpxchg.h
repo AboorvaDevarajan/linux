@@ -4,6 +4,7 @@
 
 #ifdef __KERNEL__
 #include <linux/compiler.h>
+#include <linux/types.h>
 #include <asm/synch.h>
 #include <linux/bug.h>
 
@@ -751,6 +752,59 @@ __cmpxchg_acquire(void *ptr, unsigned long old, unsigned long new,
 	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
 	arch_cmpxchg_acquire((ptr), (o), (n));				\
 })
+
+/*
+ * 128-bit cmpxchg via POWER8+ lqarx/stqcx (ISA 2.07). Assembler so
+ * even-odd GPR pairs do not fight the ELFv2 u128 ABI.
+ *
+ * system_has_cmpxchg128() matches early_cpu_has_feature(CPU_FTR_ARCH_207S).
+ * cpu_has_feature() cannot be used here: this header is included from
+ * linux/atomic.h, and cpu_has_feature.h pulls jump_label.h.
+ */
+u128 __cmpxchg_u128(volatile u128 *ptr, u128 old, u128 new);
+u128 __cmpxchg_u128_local(volatile u128 *ptr, u128 old, u128 new);
+bool __try_cmpxchg_u128(volatile u128 *ptr, u128 *oldp, u128 new);
+bool __try_cmpxchg_u128_local(volatile u128 *ptr, u128 *oldp, u128 new);
+
+static __always_inline bool system_has_cmpxchg128(void)
+{
+	return !!(CPU_FTRS_ALWAYS & CPU_FTR_ARCH_207S) ||
+	       !!(CPU_FTRS_POSSIBLE & cur_cpu_spec->cpu_features &
+		  CPU_FTR_ARCH_207S);
+}
+#define system_has_cmpxchg128	system_has_cmpxchg128
+
+static __always_inline notrace u128 arch_cmpxchg128(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128(ptr, old, new);
+}
+
+static __always_inline notrace u128 arch_cmpxchg128_local(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_local(ptr, old, new);
+}
+
+static __always_inline notrace u128 arch_cmpxchg128_relaxed(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_local(ptr, old, new);
+}
+
+static __always_inline notrace bool arch_try_cmpxchg128(volatile u128 *ptr, u128 *oldp, u128 new)
+{
+	return __try_cmpxchg_u128(ptr, oldp, new);
+}
+
+static __always_inline notrace bool arch_try_cmpxchg128_local(volatile u128 *ptr, u128 *oldp, u128 new)
+{
+	return __try_cmpxchg_u128_local(ptr, oldp, new);
+}
+
+#define arch_cmpxchg128		arch_cmpxchg128
+#define arch_cmpxchg128_local	arch_cmpxchg128_local
+#define arch_cmpxchg128_relaxed	arch_cmpxchg128_relaxed
+#define arch_try_cmpxchg128		arch_try_cmpxchg128
+#define arch_try_cmpxchg128_local	arch_try_cmpxchg128_local
+#define arch_try_cmpxchg128_relaxed	arch_try_cmpxchg128_local
 #else
 #include <asm-generic/cmpxchg-local.h>
 #define arch_cmpxchg64_local(ptr, o, n) __generic_cmpxchg64_local((ptr), (o), (n))
