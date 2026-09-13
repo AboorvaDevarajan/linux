@@ -5,8 +5,9 @@ noarg:
 TEST_GEN_PROGS := hugetlb_vs_thp_test subpage_prot prot_sao segv_errors wild_bctr \
 		  large_vm_fork_separation bad_accesses exec_prot pkey_exec_prot \
 		  pkey_siginfo stack_expansion_signal stack_expansion_ldst \
-		  large_vm_gpr_corruption
-TEST_PROGS := stress_code_patching.sh
+		  large_vm_gpr_corruption cmpxchg128_slub_stress
+TEST_PROGS := stress_code_patching.sh cmpxchg128_slub.sh
+TEST_PROGS_EXTENDED := run_cmpxchg128_e2e.sh
 
 TEST_GEN_PROGS_EXTENDED := tlbie_test
 TEST_GEN_FILES := tempfile
@@ -37,3 +38,4 @@ $(OUTPUT)/tempfile:
 
 $(OUTPUT)/tlbie_test: LDLIBS += -lpthread
 $(OUTPUT)/pkey_siginfo: LDLIBS += -lpthread
+$(OUTPUT)/cmpxchg128_slub_stress: LDLIBS += -lpthread

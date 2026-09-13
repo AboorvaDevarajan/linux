@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
+cmpxchg128_slub_stress
 bad_accesses
 exec_prot
 hugetlb_vs_thp_test
