@@ -24,6 +24,16 @@
 #define __atomic_release_fence()					\
 	__asm__ __volatile__(PPC_RELEASE_BARRIER "" : : : "memory")
 
+/*
+ * Fallback for generated fully ordered ops that only have a relaxed
+ * LL/SC loop. Prefer the in-asm PPC_ATOMIC_* sequences below (same
+ * shape as cmpxchg). 32-bit macros still expand to sync.
+ */
+#define __atomic_pre_full_fence()					\
+	__asm__ __volatile__(PPC_ATOMIC_ENTRY_BARRIER "" : : : "memory")
+#define __atomic_post_full_fence()					\
+	__asm__ __volatile__(PPC_ATOMIC_EXIT_BARRIER "" : : : "memory")
+
 static __inline__ int arch_atomic_read(const atomic_t *v)
 {
 	int t;
@@ -61,6 +71,25 @@ static __inline__ void arch_atomic_##op(int a, atomic_t *v)		\
 	: "cc", ##__VA_ARGS__);						\
 }									\
 
+#define ATOMIC_OP_RETURN(op, asm_op, suffix, sign, ...)			\
+static inline int arch_atomic_##op##_return(int a, atomic_t *v)		\
+{									\
+	int t;								\
+									\
+	__asm__ __volatile__(						\
+	PPC_ATOMIC_ENTRY_BARRIER					\
+"1:	lwarx	%0,0,%3		# atomic_" #op "_return\n"		\
+	#asm_op "%I2" suffix " %0,%0,%2\n"				\
+"	stwcx.	%0,0,%3\n"						\
+"	bne-	1b\n"							\
+	PPC_ATOMIC_EXIT_BARRIER						\
+	: "=&r" (t), "+m" (v->counter)					\
+	: "r"#sign (a), "r" (&v->counter)				\
+	: "cc", "memory", ##__VA_ARGS__);				\
+									\
+	return t;							\
+}
+
 #define ATOMIC_OP_RETURN_RELAXED(op, asm_op, suffix, sign, ...)		\
 static inline int arch_atomic_##op##_return_relaxed(int a, atomic_t *v)	\
 {									\
@@ -76,6 +105,25 @@ static inline int arch_atomic_##op##_return_relaxed(int a, atomic_t *v)	\
 	: "cc", ##__VA_ARGS__);						\
 									\
 	return t;							\
+}
+
+#define ATOMIC_FETCH_OP(op, asm_op, suffix, sign, ...)			\
+static inline int arch_atomic_fetch_##op(int a, atomic_t *v)		\
+{									\
+	int res, t;							\
+									\
+	__asm__ __volatile__(						\
+	PPC_ATOMIC_ENTRY_BARRIER					\
+"1:	lwarx	%0,0,%4		# atomic_fetch_" #op "\n"		\
+	#asm_op "%I3" suffix " %1,%0,%3\n"				\
+"	stwcx.	%1,0,%4\n"						\
+"	bne-	1b\n"							\
+	PPC_ATOMIC_EXIT_BARRIER						\
+	: "=&r" (res), "=&r" (t), "+m" (v->counter)			\
+	: "r"#sign (a), "r" (&v->counter)				\
+	: "cc", "memory", ##__VA_ARGS__);				\
+									\
+	return res;							\
 }
 
 #define ATOMIC_FETCH_OP_RELAXED(op, asm_op, suffix, sign, ...)		\
@@ -97,34 +145,46 @@ static inline int arch_atomic_fetch_##op##_relaxed(int a, atomic_t *v)	\
 
 #define ATOMIC_OPS(op, asm_op, suffix, sign, ...)			\
 	ATOMIC_OP(op, asm_op, suffix, sign, ##__VA_ARGS__)		\
+	ATOMIC_OP_RETURN(op, asm_op, suffix, sign, ##__VA_ARGS__)	\
 	ATOMIC_OP_RETURN_RELAXED(op, asm_op, suffix, sign, ##__VA_ARGS__)\
+	ATOMIC_FETCH_OP(op, asm_op, suffix, sign, ##__VA_ARGS__)	\
 	ATOMIC_FETCH_OP_RELAXED(op, asm_op, suffix, sign, ##__VA_ARGS__)
 
 ATOMIC_OPS(add, add, "c", I, "xer")
 ATOMIC_OPS(sub, sub, "c", I, "xer")
 
+#define arch_atomic_add_return arch_atomic_add_return
+#define arch_atomic_sub_return arch_atomic_sub_return
 #define arch_atomic_add_return_relaxed arch_atomic_add_return_relaxed
 #define arch_atomic_sub_return_relaxed arch_atomic_sub_return_relaxed
 
+#define arch_atomic_fetch_add arch_atomic_fetch_add
+#define arch_atomic_fetch_sub arch_atomic_fetch_sub
 #define arch_atomic_fetch_add_relaxed arch_atomic_fetch_add_relaxed
 #define arch_atomic_fetch_sub_relaxed arch_atomic_fetch_sub_relaxed
 
 #undef ATOMIC_OPS
 #define ATOMIC_OPS(op, asm_op, suffix, sign)				\
 	ATOMIC_OP(op, asm_op, suffix, sign)				\
+	ATOMIC_FETCH_OP(op, asm_op, suffix, sign)			\
 	ATOMIC_FETCH_OP_RELAXED(op, asm_op, suffix, sign)
 
 ATOMIC_OPS(and, and, ".", K)
 ATOMIC_OPS(or, or, "", K)
 ATOMIC_OPS(xor, xor, "", K)
 
+#define arch_atomic_fetch_and arch_atomic_fetch_and
+#define arch_atomic_fetch_or  arch_atomic_fetch_or
+#define arch_atomic_fetch_xor arch_atomic_fetch_xor
 #define arch_atomic_fetch_and_relaxed arch_atomic_fetch_and_relaxed
 #define arch_atomic_fetch_or_relaxed  arch_atomic_fetch_or_relaxed
 #define arch_atomic_fetch_xor_relaxed arch_atomic_fetch_xor_relaxed
 
 #undef ATOMIC_OPS
 #undef ATOMIC_FETCH_OP_RELAXED
+#undef ATOMIC_FETCH_OP
 #undef ATOMIC_OP_RETURN_RELAXED
+#undef ATOMIC_OP_RETURN
 #undef ATOMIC_OP
 
 /**
@@ -227,6 +287,26 @@ static __inline__ void arch_atomic64_##op(s64 a, atomic64_t *v)		\
 	: "cc");							\
 }
 
+#define ATOMIC64_OP_RETURN(op, asm_op)					\
+static inline s64							\
+arch_atomic64_##op##_return(s64 a, atomic64_t *v)			\
+{									\
+	s64 t;								\
+									\
+	__asm__ __volatile__(						\
+	PPC_ATOMIC_ENTRY_BARRIER					\
+"1:	ldarx	%0,0,%3		# atomic64_" #op "_return\n"		\
+	#asm_op " %0,%2,%0\n"						\
+"	stdcx.	%0,0,%3\n"						\
+"	bne-	1b\n"							\
+	PPC_ATOMIC_EXIT_BARRIER						\
+	: "=&r" (t), "+m" (v->counter)					\
+	: "r" (a), "r" (&v->counter)					\
+	: "cc", "memory");						\
+									\
+	return t;							\
+}
+
 #define ATOMIC64_OP_RETURN_RELAXED(op, asm_op)				\
 static inline s64							\
 arch_atomic64_##op##_return_relaxed(s64 a, atomic64_t *v)		\
@@ -243,6 +323,26 @@ arch_atomic64_##op##_return_relaxed(s64 a, atomic64_t *v)		\
 	: "cc");							\
 									\
 	return t;							\
+}
+
+#define ATOMIC64_FETCH_OP(op, asm_op)					\
+static inline s64							\
+arch_atomic64_fetch_##op(s64 a, atomic64_t *v)				\
+{									\
+	s64 res, t;							\
+									\
+	__asm__ __volatile__(						\
+	PPC_ATOMIC_ENTRY_BARRIER					\
+"1:	ldarx	%0,0,%4		# atomic64_fetch_" #op "\n"		\
+	#asm_op " %1,%3,%0\n"						\
+"	stdcx.	%1,0,%4\n"						\
+"	bne-	1b\n"							\
+	PPC_ATOMIC_EXIT_BARRIER						\
+	: "=&r" (res), "=&r" (t), "+m" (v->counter)			\
+	: "r" (a), "r" (&v->counter)					\
+	: "cc", "memory");						\
+									\
+	return res;							\
 }
 
 #define ATOMIC64_FETCH_OP_RELAXED(op, asm_op)				\
@@ -265,34 +365,46 @@ arch_atomic64_fetch_##op##_relaxed(s64 a, atomic64_t *v)		\
 
 #define ATOMIC64_OPS(op, asm_op)					\
 	ATOMIC64_OP(op, asm_op)						\
+	ATOMIC64_OP_RETURN(op, asm_op)					\
 	ATOMIC64_OP_RETURN_RELAXED(op, asm_op)				\
+	ATOMIC64_FETCH_OP(op, asm_op)					\
 	ATOMIC64_FETCH_OP_RELAXED(op, asm_op)
 
 ATOMIC64_OPS(add, add)
 ATOMIC64_OPS(sub, subf)
 
+#define arch_atomic64_add_return arch_atomic64_add_return
+#define arch_atomic64_sub_return arch_atomic64_sub_return
 #define arch_atomic64_add_return_relaxed arch_atomic64_add_return_relaxed
 #define arch_atomic64_sub_return_relaxed arch_atomic64_sub_return_relaxed
 
+#define arch_atomic64_fetch_add arch_atomic64_fetch_add
+#define arch_atomic64_fetch_sub arch_atomic64_fetch_sub
 #define arch_atomic64_fetch_add_relaxed arch_atomic64_fetch_add_relaxed
 #define arch_atomic64_fetch_sub_relaxed arch_atomic64_fetch_sub_relaxed
 
 #undef ATOMIC64_OPS
 #define ATOMIC64_OPS(op, asm_op)					\
 	ATOMIC64_OP(op, asm_op)						\
+	ATOMIC64_FETCH_OP(op, asm_op)					\
 	ATOMIC64_FETCH_OP_RELAXED(op, asm_op)
 
 ATOMIC64_OPS(and, and)
 ATOMIC64_OPS(or, or)
 ATOMIC64_OPS(xor, xor)
 
+#define arch_atomic64_fetch_and arch_atomic64_fetch_and
+#define arch_atomic64_fetch_or  arch_atomic64_fetch_or
+#define arch_atomic64_fetch_xor arch_atomic64_fetch_xor
 #define arch_atomic64_fetch_and_relaxed arch_atomic64_fetch_and_relaxed
 #define arch_atomic64_fetch_or_relaxed  arch_atomic64_fetch_or_relaxed
 #define arch_atomic64_fetch_xor_relaxed arch_atomic64_fetch_xor_relaxed
 
-#undef ATOPIC64_OPS
+#undef ATOMIC64_OPS
 #undef ATOMIC64_FETCH_OP_RELAXED
+#undef ATOMIC64_FETCH_OP
 #undef ATOMIC64_OP_RETURN_RELAXED
+#undef ATOMIC64_OP_RETURN
 #undef ATOMIC64_OP
 
 static __inline__ void arch_atomic64_inc(atomic64_t *v)
@@ -309,6 +421,24 @@ static __inline__ void arch_atomic64_inc(atomic64_t *v)
 	: "cc", "xer");
 }
 #define arch_atomic64_inc arch_atomic64_inc
+
+static __inline__ s64 arch_atomic64_inc_return(atomic64_t *v)
+{
+	s64 t;
+
+	__asm__ __volatile__(
+	PPC_ATOMIC_ENTRY_BARRIER
+"1:	ldarx	%0,0,%2		# atomic64_inc_return\n"
+"	addic	%0,%0,1\n"
+"	stdcx.	%0,0,%2\n"
+"	bne-	1b\n"
+	PPC_ATOMIC_EXIT_BARRIER
+	: "=&r" (t), "+m" (v->counter)
+	: "r" (&v->counter)
+	: "cc", "xer", "memory");
+
+	return t;
+}
 
 static __inline__ s64 arch_atomic64_inc_return_relaxed(atomic64_t *v)
 {
@@ -341,6 +471,24 @@ static __inline__ void arch_atomic64_dec(atomic64_t *v)
 }
 #define arch_atomic64_dec arch_atomic64_dec
 
+static __inline__ s64 arch_atomic64_dec_return(atomic64_t *v)
+{
+	s64 t;
+
+	__asm__ __volatile__(
+	PPC_ATOMIC_ENTRY_BARRIER
+"1:	ldarx	%0,0,%2		# atomic64_dec_return\n"
+"	addic	%0,%0,-1\n"
+"	stdcx.	%0,0,%2\n"
+"	bne-	1b\n"
+	PPC_ATOMIC_EXIT_BARRIER
+	: "=&r" (t), "+m" (v->counter)
+	: "r" (&v->counter)
+	: "cc", "xer", "memory");
+
+	return t;
+}
+
 static __inline__ s64 arch_atomic64_dec_return_relaxed(atomic64_t *v)
 {
 	s64 t;
@@ -357,6 +505,8 @@ static __inline__ s64 arch_atomic64_dec_return_relaxed(atomic64_t *v)
 	return t;
 }
 
+#define arch_atomic64_inc_return arch_atomic64_inc_return
+#define arch_atomic64_dec_return arch_atomic64_dec_return
 #define arch_atomic64_inc_return_relaxed arch_atomic64_inc_return_relaxed
 #define arch_atomic64_dec_return_relaxed arch_atomic64_dec_return_relaxed
 
