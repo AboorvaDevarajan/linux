@@ -4,6 +4,7 @@
 
 #ifdef __KERNEL__
 #include <linux/compiler.h>
+#include <linux/types.h>
 #include <asm/synch.h>
 #include <linux/bug.h>
 
@@ -751,6 +752,35 @@ __cmpxchg_acquire(void *ptr, unsigned long old, unsigned long new,
 	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
 	arch_cmpxchg_acquire((ptr), (o), (n));				\
 })
+
+/*
+ * 128-bit cmpxchg via POWER8+ lqarx/stqcx (ISA 2.07). Implemented in
+ * arch/powerpc/lib/cmpxchg128.S so even-odd GPR pairs do not fight GCC.
+ */
+u128 __cmpxchg_u128(volatile u128 *ptr, u128 old, u128 new);
+u128 __cmpxchg_u128_local(volatile u128 *ptr, u128 old, u128 new);
+
+#define system_has_cmpxchg128()						\
+	((bool)(cur_cpu_spec->cpu_features & CPU_FTR_ARCH_207S))
+
+static __always_inline u128 arch_cmpxchg128(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128(ptr, old, new);
+}
+
+static __always_inline u128 arch_cmpxchg128_local(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_local(ptr, old, new);
+}
+
+static __always_inline u128 arch_cmpxchg128_relaxed(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_local(ptr, old, new);
+}
+
+#define arch_cmpxchg128		arch_cmpxchg128
+#define arch_cmpxchg128_local	arch_cmpxchg128_local
+#define arch_cmpxchg128_relaxed	arch_cmpxchg128_relaxed
 #else
 #include <asm-generic/cmpxchg-local.h>
 #define arch_cmpxchg64_local(ptr, o, n) __generic_cmpxchg64_local((ptr), (o), (n))
