@@ -1,0 +1,35 @@
+Litmus tests for fully ordered powerpc atomics
+==============================================
+
+LKMM C tests (herd7 -conf tools/memory-model/linux-kernel.cfg):
+
+  SB+atomicincmb+atomicincmb.litmus
+	Never. Store buffering forbidden when each side uses
+	atomic_inc_return() on a *different* counter as the fence.
+
+  SB+atomicincrel+atomicincacq.litmus
+	Sometimes. Contrast: release RMW + acquire RMW on independent
+	counters is not a full barrier.
+
+  MP+atomicincmb.litmus
+	Never. Message passing through fully ordered RMWs.
+
+PPC ISA tests (herd7, first line "PPC ..."):
+
+  SB+lwsyncs.litmus
+	Sometimes. lwsync does not order store-load.
+
+  SB+syncs.litmus
+	Never. Two hwsyncs (the old mapping).
+
+  SB+lwsync-lwarx-stwcx-isync.litmus
+	Sometimes in herd's Power model (only sync is a strong fence;
+	stcx completion is not in ppc.cat). Not a disproof of the ISA
+	mapping. Controls: SB+lwsyncs Sometimes, SB+syncs Never.
+
+Run:
+
+  ./run-litmus.sh
+
+Requires herd7 from https://github.com/herd/herdtools7
+If herd7 is missing the script skips (exit 4).

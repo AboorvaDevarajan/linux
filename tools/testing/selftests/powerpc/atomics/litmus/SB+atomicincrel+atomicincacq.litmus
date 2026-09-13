@@ -1,0 +1,37 @@
+C SB+atomicincrel+atomicincacq
+
+(*
+ * Result: Sometimes
+ *
+ * Contrast with SB+atomicincmb+atomicincmb: a release RMW on one
+ * counter and an acquire RMW on another do not provide a full
+ * barrier. If this were Never, we would not need fully ordered
+ * atomics for Dekker-style SB.
+ *)
+
+{
+	atomic_t u;
+	atomic_t v;
+}
+
+P0(int *x, int *y, atomic_t *u)
+{
+	int r0;
+	int r1;
+
+	WRITE_ONCE(*x, 1);
+	r1 = atomic_inc_return_release(u);
+	r0 = READ_ONCE(*y);
+}
+
+P1(int *x, int *y, atomic_t *v)
+{
+	int r0;
+	int r1;
+
+	WRITE_ONCE(*y, 1);
+	r1 = atomic_inc_return_acquire(v);
+	r0 = READ_ONCE(*x);
+}
+
+exists (0:r0=0 /\ 1:r0=0)

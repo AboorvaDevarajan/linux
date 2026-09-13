@@ -1,0 +1,41 @@
+C SB+atomicincmb+atomicincmb
+
+(*
+ * Result: Never
+ *
+ * Store buffering with a fully ordered atomic_inc_return() on a
+ * *different* counter on each process as the fence. LKMM models
+ * atomic_inc_return as R*[MB] ->rmw W*[MB], so 0:r0=0 /\ 1:r0=0
+ * must be forbidden. This is the property a mere acq+rel sandwich
+ * on independent locations does not give.
+ *
+ * Does not prove the ppc lwsync;lwarx;stwcx;isync mapping. See the
+ * PPC/ SB+lwsync-lwarx-stwcx-isync.litmus test for that.
+ *)
+
+{
+	atomic_t u;
+	atomic_t v;
+}
+
+P0(int *x, int *y, atomic_t *u)
+{
+	int r0;
+	int r1;
+
+	WRITE_ONCE(*x, 1);
+	r1 = atomic_inc_return(u);
+	r0 = READ_ONCE(*y);
+}
+
+P1(int *x, int *y, atomic_t *v)
+{
+	int r0;
+	int r1;
+
+	WRITE_ONCE(*y, 1);
+	r1 = atomic_inc_return(v);
+	r0 = READ_ONCE(*x);
+}
+
+exists (0:r0=0 /\ 1:r0=0)

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+atomic-rmw
+atomic-rmw-bench
+atomic-rmw-nolibc
+atomic-p9-p10
+atomic-p9-p10-nolibc

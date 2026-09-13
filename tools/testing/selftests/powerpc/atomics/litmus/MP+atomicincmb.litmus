@@ -1,0 +1,35 @@
+C MP+atomicincmb
+
+(*
+ * Result: Never
+ *
+ * Message passing with a fully ordered atomic_inc_return() as the
+ * middle fence on both sides. The consumer must not see flag==1
+ * with buf==0.
+ *)
+
+{
+	atomic_t v;
+}
+
+P0(int *buf, int *flag, atomic_t *v)
+{
+	int r1;
+
+	WRITE_ONCE(*buf, 1);
+	r1 = atomic_inc_return(v);
+	WRITE_ONCE(*flag, 1);
+}
+
+P1(int *buf, int *flag, atomic_t *v)
+{
+	int r0;
+	int r1;
+	int r2;
+
+	r0 = READ_ONCE(*flag);
+	r2 = atomic_inc_return(v);
+	r1 = READ_ONCE(*buf);
+}
+
+exists (1:r0=1 /\ 1:r1=0)

@@ -8,6 +8,7 @@ ARCH := $(shell echo $(ARCH) | sed -e s/ppc.*/powerpc/)
 ifeq ($(ARCH),powerpc)
 
 SUB_DIRS = alignment		\
+	   atomics		\
 	   benchmarks		\
 	   cache_shape		\
 	   copyloops		\
