@@ -56,6 +56,13 @@ config CODE_PATCHING_SELFTEST
 	bool "Run self-tests of the code-patching code"
 	depends on DEBUG_KERNEL
 
+config PPC_CMPXCHG128_SELFTEST
+	bool "Run self-tests of 128-bit cmpxchg (lqarx/stqcx)"
+	depends on DEBUG_KERNEL && PPC64
+	help
+	  Boot-time test of arch_cmpxchg128 using POWER8+ lqarx/stqcx.
+	  Skips at runtime on CPUs without ISA 2.07.
+
 config JUMP_LABEL_FEATURE_CHECKS
 	bool "Enable use of jump label for cpu/mmu_has_feature()"
 	depends on JUMP_LABEL

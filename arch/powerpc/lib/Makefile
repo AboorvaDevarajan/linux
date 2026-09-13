@@ -28,6 +28,7 @@ CFLAGS_feature-fixups.o += $(DISABLE_LATENT_ENTROPY_PLUGIN)
 obj-y += code-patching.o feature-fixups.o pmem.o
 
 obj-$(CONFIG_CODE_PATCHING_SELFTEST) += test-code-patching.o
+obj-$(CONFIG_PPC_CMPXCHG128_SELFTEST) += test-cmpxchg128.o
 
 ifndef CONFIG_KASAN
 obj-y	+=	string.o memcmp_$(BITS).o

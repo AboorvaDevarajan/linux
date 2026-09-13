@@ -4,6 +4,7 @@
 
 #ifdef __KERNEL__
 #include <linux/compiler.h>
+#include <linux/types.h>
 #include <asm/synch.h>
 #include <linux/bug.h>
 
@@ -751,6 +752,81 @@ __cmpxchg_acquire(void *ptr, unsigned long old, unsigned long new,
 	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
 	arch_cmpxchg_acquire((ptr), (o), (n));				\
 })
+
+/*
+ * 128-bit cmpxchg via POWER8+ lqarx/stqcx (ISA 2.07). RT/RS must be an
+ * even-odd GPR pair; the EA must be 16-byte aligned. Two u64 halves are
+ * compared in memory order so the same sequence works on BE and LE.
+ */
+union __u128_halves {
+	u128 full;
+	struct {
+		u64 first;
+		u64 second;
+	};
+};
+
+#define system_has_cmpxchg128()						\
+	((bool)(cur_cpu_spec->cpu_features & CPU_FTR_ARCH_207S))
+
+#define __CMPXCHG128(name, br, br2)					\
+static __always_inline u128 __cmpxchg_u128##name(volatile u128 *ptr,	\
+						  u128 old, u128 new)	\
+{									\
+	union __u128_halves o = { .full = old };			\
+	union __u128_halves n = { .full = new };				\
+	union __u128_halves ret;					\
+	register u64 rt0 asm("r6");					\
+	register u64 rt1 asm("r7");					\
+	register u64 rs0 asm("r8") = n.first;				\
+	register u64 rs1 asm("r9") = n.second;				\
+	register volatile u128 *addr asm("r4") = ptr;			\
+									\
+	__asm__ __volatile__(						\
+		br							\
+	"1:	" PPC_LQARX(6, 0, 4, 0) "\n"				\
+	"	cmpld	cr0,6,%3\n"					\
+	"	bne-	2f\n"						\
+	"	cmpld	cr1,7,%4\n"					\
+	"	bne-	cr1,2f\n"					\
+	"	" PPC_STQCX(8, 0, 4) "\n"				\
+	"	bne-	1b\n"						\
+		br2							\
+	"2:"								\
+	: "=&r" (rt0), "=&r" (rt1), "+m" (*ptr)				\
+	: "r" (o.first), "r" (o.second), "r" (addr),			\
+	  "r" (rs0), "r" (rs1)						\
+	: "cr0", "cr1", "memory");					\
+									\
+	ret.first = rt0;						\
+	ret.second = rt1;						\
+	return ret.full;						\
+}
+
+__CMPXCHG128(, PPC_ATOMIC_ENTRY_BARRIER, PPC_ATOMIC_EXIT_BARRIER)
+__CMPXCHG128(_local, , )
+__CMPXCHG128(_relaxed, , )
+
+#undef __CMPXCHG128
+
+static __always_inline u128 arch_cmpxchg128(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128(ptr, old, new);
+}
+
+static __always_inline u128 arch_cmpxchg128_local(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_local(ptr, old, new);
+}
+
+static __always_inline u128 arch_cmpxchg128_relaxed(volatile u128 *ptr, u128 old, u128 new)
+{
+	return __cmpxchg_u128_relaxed(ptr, old, new);
+}
+
+#define arch_cmpxchg128		arch_cmpxchg128
+#define arch_cmpxchg128_local	arch_cmpxchg128_local
+#define arch_cmpxchg128_relaxed	arch_cmpxchg128_relaxed
 #else
 #include <asm-generic/cmpxchg-local.h>
 #define arch_cmpxchg64_local(ptr, o, n) __generic_cmpxchg64_local((ptr), (o), (n))
